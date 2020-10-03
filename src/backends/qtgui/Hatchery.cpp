@@ -27,6 +27,8 @@
 #include <QGraphicsTextItem>
 #include <QGraphicsView>
 #include <QHBoxLayout>
+#include <QTimeLine>
+#include <QPropertyAnimation>
 #include <cassert>
 #include <memory>
 
@@ -105,7 +107,7 @@ QImage imageFromSpriteFrame(shared_ptr<creaturesImage> img, unsigned int frame, 
 	return ourimg;
 }
 
-class EggItem : public QGraphicsPixmapItem {
+class EggItem : public QObject, public QGraphicsPixmapItem {
 protected:
 	int realx, realy;
 	QGraphicsPixmapItem *gender;
@@ -166,6 +168,10 @@ public:
 		hatchery->qtopenc2e->makeNewEgg();
 		hatchery->close();
 	}
+
+	void AnimationEvent(QTimeLinePrivate* event) {
+		if
+	}
 };
 
 // TODO: these are from imageManager.cpp, it'd be nice to have a non-hacky interface,
@@ -209,9 +215,27 @@ Hatchery::Hatchery(QtOpenc2e *parent) : QDialog(parent) {
 		}
 
 		/* fan animation */
-		for (unsigned int i = 0; i < 4; i++) {
-			// TODO
-		}
+		
+		std::string fan0 = world.findFile("hatchery/FAN0.bmp");
+		QPixmap fanpm0(fan0.c_str());
+		std::string fan1 = world.findFile("hatchery/FAN1.bmp");
+		QPixmap fanpm1(fan1.c_str());
+		std::string fan2 = world.findFile("hatchery/FAN2.bmp");
+		QPixmap fanpm2(fan2.c_str());
+		std::string fan3 = world.findFile("hatchery/FAN3.bmp");
+		QPixmap fanpm3(fan3.c_str());
+		QGraphicsPixmapItem* fangpi0= graphicsScene->addPixmap(fanpm0);
+		fangpi0->setVisible(false);
+		QGraphicsPixmapItem* fangpi1 = graphicsScene->addPixmap(fanpm1);
+		fangpi1->setVisible(false);
+		QGraphicsPixmapItem* fangpi2 = graphicsScene->addPixmap(fanpm2);
+		fangpi2->setVisible(false);
+		QGraphicsPixmapItem* fangpi3 = graphicsScene->addPixmap(fanpm3);
+		fangpi3->setVisible(false);
+		QTimeLine* fananim = new QTimeLine(1000);
+		
+		fananim->setFrameRange(0, 4);
+
 	
 		/* 'off' state for the light */
 		// TODO

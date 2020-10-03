@@ -52,6 +52,7 @@ private slots:
 	
 	void showHatchery();
 	void toggleHatchery();
+
 	void showAgentInjector();
 	void toggleAgentInjector();
 	void showBrainViewer();
