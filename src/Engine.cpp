@@ -24,6 +24,8 @@
 #include "Map.h"
 #include "MetaRoom.h"
 #include "MusicManager.h"
+#include "SoundManager.h"
+#include "NetBackend.h"
 #include "caosVM.h" // for setupCommandPointers()
 #include "caosScript.h" // for executeNetwork()
 #include "PointerAgent.h"
@@ -42,7 +44,7 @@
 #include <ghc/filesystem.hpp>
 #define CXXOPTS_VECTOR_DELIMITER '\0'
 #include <cxxopts.hpp>
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include <memory>
 #include <stdexcept>
 namespace fs = ghc::filesystem;
@@ -86,8 +88,8 @@ Engine::Engine() {
 
 	exefile = 0;
 
-	addPossibleBackend("null", shared_ptr<Backend>(new NullBackend()));
-	addPossibleAudioBackend("null", shared_ptr<AudioBackend>(new NullAudioBackend()));
+	addPossibleBackend("null", std::shared_ptr<Backend>(new NullBackend()));
+	addPossibleAudioBackend("null", std::shared_ptr<AudioBackend>(new NullAudioBackend()));
 
 	camera.reset(new MainCamera);
 }
@@ -109,7 +111,7 @@ void Engine::addPossibleAudioBackend(std::string s, std::shared_ptr<AudioBackend
 	possible_audiobackends[s] = b;
 }
 
-void Engine::setBackend(shared_ptr<Backend> b) {
+void Engine::setBackend(std::shared_ptr<Backend> b) {
 	backend = b;
 	lasttimestamp = backend->ticks();
 }
@@ -323,22 +325,11 @@ void Engine::update() {
 	// tick the world
 	world.tick();
 
-	// poll audio streams
-	audio->poll();
-
-	// play C1 music
-	// TODO: this doesn't seem to actually be every 7 seconds, but actually somewhat random
-	// TODO: this should be linked to 'real' time, so it doesn't go crazy when game speed is modified
-	// TODO: is this the right place for this?
-	if (version == 1 && (world.tickcount % 70) == 0) {
-		int piece = 1 + (rand() % 28);
-		std::string filename = fmt::sprintf("MU%02d", piece);
-		std::shared_ptr<AudioSource> s = world.playAudio(filename, AgentRef(), false, false, true);
-		if (s) s->setVolume(0.4f);
-	}
-
-	// play MNG music
-	musicmanager.tick();
+	// update sounds
+	soundmanager.tick();
+	
+	// play C1 background wavs and MNG and MIDI music
+	musicmanager->tick();
 
 	// update our data for things like pace, race, ticktime, etc
 	ticktimes[ticktimeptr] = backend->ticks() - tickdata;
@@ -354,7 +345,6 @@ void Engine::update() {
 
 bool Engine::tick() {
 	assert(backend);
-	backend->handleEvents();
 
 	// tick if necessary
 	bool needupdate = fastticks || !backend->ticks() || (backend->ticks() - tickdata >= world.ticktime - 5);
@@ -450,11 +440,13 @@ void Engine::handleKeyboardScrolling() {
 }
 
 void Engine::processEvents() {
+	net->handleEvents();
+
 	BackendEvent event;
 	while (backend->pollEvent(event)) {
 		switch (event.type) {
 			case eventresizewindow:
-				handleResizedWindow(event);
+				handleResizedWindow();
 				break;
 
 			case eventmousemove:
@@ -488,11 +480,11 @@ void Engine::processEvents() {
 	}
 }
 
-void Engine::handleResizedWindow(BackendEvent &event) {
+void Engine::handleResizedWindow() {
 	// notify agents
-	for (std::list<std::shared_ptr<Agent> >::iterator i = world.agents.begin(); i != world.agents.end(); i++) {
-		if (!*i) continue;
-		(*i)->queueScript(123, 0); // window resized script
+	for (auto& a : world.agents) {
+		if (!a) continue;
+		a->queueScript(123, 0); // window resized script
 	}
 }
 
@@ -569,13 +561,10 @@ void Engine::handleTextInput(BackendEvent &event) {
 
 	int translated_char = cp1252_text[0];
 
-	// some backends (*cough*Qt*cough* think DEL is text)
-	if (!cp1252_isprint(translated_char)) {
-		return;
-	}
-
-	if (version < 3 && !world.focusagent) {
-		Bubble::newBubble(world.hand(), false, std::string());	
+	if (cp1252_isprint(translated_char)) {
+		if (version < 3 && !world.focusagent) {
+			Bubble::newBubble(world.hand(), false, std::string());
+		}
 	}
 
 	// tell the agent with keyboard focus
@@ -688,6 +677,34 @@ void Engine::handleRawKeyDown(BackendEvent &event) {
 		if (!*i) continue;
 		if ((*i)->imsk_key_down)
 			(*i)->queueScript(73, 0, k); // key down script
+	}
+
+	// certain raw keys get passed as translated chars, too, after the raw key event
+	// these correspond to the CP1252/ASCII control codes
+	// TODO: should this be handled in Backend instead?
+	BackendEvent translatedevent;
+	translatedevent.type = eventtextinput;
+	switch (event.key) {
+		case OPENC2E_KEY_BACKSPACE:
+			translatedevent.text = "\x08";
+			break;
+		case OPENC2E_KEY_TAB:
+			translatedevent.text = "\t";
+			break;
+		case OPENC2E_KEY_RETURN:
+			translatedevent.text = "\n";
+			break;
+		case OPENC2E_KEY_ESCAPE:
+			translatedevent.text = "\x1b";
+			break;
+		case OPENC2E_KEY_DELETE:
+			translatedevent.text = "\x7f";
+			break;
+		default:
+			break;
+	}
+	if (translatedevent.text.size()) {
+		handleTextInput(translatedevent);
 	}
 }
 
@@ -842,25 +859,26 @@ bool Engine::initialSetup() {
 
 	// autodetect gametype if necessary
 	if (gametype.empty()) {
-		std::cout << "Warning: No gametype specified, ";
+		std::string msg = "Warning: No gametype specified, ";
 		// TODO: is this sane? especially unsure about about.exe
 		if (!world.findFile("Creatures.exe").empty()) {
-			std::cout << "found Creatures.exe, assuming C1 (c1)";
+			msg += "found Creatures.exe, assuming C1 (c1)";
 			gametype = "c1";
 		} else if (!world.findFile("Creatures2.exe").empty()) {
-			std::cout << "found Creatures2.exe, assuming C2 (c2)";
+			msg += "found Creatures2.exe, assuming C2 (c2)";
 			gametype = "c2";
 		} else if (!world.findFile("Sea-Monkeys.ico").empty()) {
-			std::cout << "found Sea-Monkeys.ico, assuming Sea-Monkeys (sm)";
+			msg += "found Sea-Monkeys.ico, assuming Sea-Monkeys (sm)";
 			gametype = "sm";
 		} else if (!world.findFile("about.exe").empty()) {
-			std::cout << "found about.exe, assuming CA, CP or CV (cv)";
+			msg += "found about.exe, assuming CA, CP or CV (cv)";
 			gametype = "cv";
 		} else {
-			std::cout << "assuming C3/DS (c3)";
+			msg += "assuming C3/DS (c3)";
 			gametype = "c3";
 		}
-		std::cout << ", see --help if you need to specify one." << std::endl;
+		msg += ", see --help if you need to specify one.\n";
+		std::cout << msg;
 	}
 
 	// set engine version
@@ -889,7 +907,7 @@ bool Engine::initialSetup() {
 		version = 3;
 		bmprenderer = true;
 	} else
-		throw creaturesException(fmt::sprintf("unknown gametype '%s'!", gametype));
+		throw creaturesException(fmt::format("unknown gametype '{}'!", gametype));
 
 	// finally, add our cache directory to the end
 	world.data_directories.push_back(storageDirectory());
@@ -897,28 +915,26 @@ bool Engine::initialSetup() {
 	// initialize backends
 	if (cmdline_norun) preferred_backend = "null";
 	if (preferred_backend != "null") std::cout << "* Initialising backend " << preferred_backend << "..." << std::endl;	
-	shared_ptr<Backend> b = possible_backends[preferred_backend];
+	std::shared_ptr<Backend> b = possible_backends[preferred_backend];
 	if (!b)	throw creaturesException("No such backend " + preferred_backend);
 	b->init(); setBackend(b);
 	possible_backends.clear();
 
 	if (cmdline_norun) preferred_audiobackend = "null";
 	if (preferred_audiobackend != "null") std::cout << "* Initialising audio backend " << preferred_audiobackend << "..." << std::endl;	
-	shared_ptr<AudioBackend> a = possible_audiobackends[preferred_audiobackend];
+	std::shared_ptr<AudioBackend> a = possible_audiobackends[preferred_audiobackend];
 	if (!a)	throw creaturesException("No such audio backend " + preferred_audiobackend);
 	try{
 		a->init(); audio = a;
 	} catch (creaturesException &e) {
 		std::cerr << "* Couldn't initialize backend " << preferred_audiobackend << ": " << e.what() << std::endl << "* Continuing without sound." << std::endl;
-		audio = shared_ptr<AudioBackend>(new NullAudioBackend());
+		audio = std::shared_ptr<AudioBackend>(new NullAudioBackend());
 		audio->init();
-	}
-	if (!cmdline_enable_sound) {
-		audio->setMute(true);
 	}
 	possible_audiobackends.clear();
 	
-	int listenport = backend->networkInit();
+	net = std::make_shared<NetBackend>();
+	int listenport = net->init();
 	if (listenport != -1) {
 		// inform the user of the port used, and store it in the relevant file
 		std::cout << "* Listening for connections on port " << listenport << "." << std::endl;
@@ -928,7 +944,7 @@ bool Engine::initialSetup() {
 			fs::create_directory(p);
 		if (fs::is_directory(p)) {
 			std::ofstream f((p.string() + "/port").c_str(), std::ios::trunc);
-			f << fmt::sprintf("%d", listenport);
+			f << std::to_string(listenport);
 		}
 #endif
 	}
@@ -937,6 +953,7 @@ bool Engine::initialSetup() {
 	world.gallery->loadDefaultPalette();
 	
 	// initial setup
+	musicmanager = std::make_unique<MusicManager>(audio);
 	std::cout << "* Reading catalogue files..." << std::endl;
 	world.initCatalogue();
 	std::cout << "* Initial setup..." << std::endl;
@@ -963,9 +980,7 @@ bool Engine::initialSetup() {
 
 	if (world.data_directories.size() < 3) {
 		// TODO: This is a hack for DS, basically. Not sure if it works properly. - fuzzie
-		caosValue name; name.setString("engine_no_auxiliary_bootstrap_1");
-		caosValue contents; contents.setInt(1);
-		eame_variables[name] = contents;
+		eame_variables["engine_no_auxiliary_bootstrap_1"] = caosValue(1);
 	}
 
 	loadGameData();
@@ -1021,6 +1036,17 @@ bool Engine::initialSetup() {
 		return false;
 	}
 
+	if (!cmdline_enable_sound) {
+		soundmanager.setMuted(true);
+		musicmanager->setMuted(true);
+		musicmanager->setMIDIMuted(true);
+	}
+
+	// Let agents know the window size (makes the DS sound options panel update
+	// to match actual engine state when starting muted)
+	// TODO: does this happen in real c2e?
+	handleResizedWindow();
+
 	return true;
 }
 
@@ -1028,6 +1054,7 @@ void Engine::shutdown() {
 	world.shutdown();
 	audio->shutdown();
 	backend->shutdown();
+	net->shutdown();
 }
 
 fs::path Engine::homeDirectory() {

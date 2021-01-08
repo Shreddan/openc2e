@@ -21,7 +21,6 @@
 #define _SDLBACKEND_H
 
 #include <SDL.h>
-#include <SDL_net.h>
 #include <array>
 #include <memory>
 #include "Backend.h"
@@ -34,11 +33,13 @@ protected:
 	SDL_Texture *texture;
 	int drawablewidth, drawableheight;
 	float scale = 1.0;
+	int viewport_offset_top = 0;
+	int viewport_offset_bottom = 0;
 	
 	SDLRenderTarget(SDLBackend *p) { parent = p; }
 
 public:
-	void renderCreaturesImage(const creaturesImage& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false);
+	void renderCreaturesImage(creaturesImage& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false);
 	void renderCreaturesImage(const std::shared_ptr<creaturesImage>& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false);
 	void renderLine(int x1, int y1, int x2, int y2, unsigned int colour);
 	void blitRenderTarget(RenderTarget *src, int x, int y, int w, int h);
@@ -52,28 +53,20 @@ class SDLBackend : public Backend {
 	friend class SDLRenderTarget;
 
 protected:
-	bool networkingup;
-
 	SDL_Window *window = nullptr;
 	int windowwidth, windowheight;
 	SDL_Renderer *renderer = nullptr;
 	SDLRenderTarget mainrendertarget;
-	TCPsocket listensocket;
 	std::array<SDL_Color, 256> default_palette;
 	float userscale = 1.0;
 
-	void handleNetworking();
 	void resizeNotify(int _w, int _h);
 
 	SDL_Surface *getMainSDLSurface() { return SDL_GetWindowSurface(window); }
 
-	virtual int idealBpp();
-
 public:
 	SDLBackend();
 	void init();
-	void initFrom(void *window_id);
-	int networkInit();
 	int run();
 	void shutdown();
 	void setUserScale(float scale);
@@ -84,9 +77,8 @@ public:
 	
 	unsigned int ticks() { return SDL_GetTicks(); }
 	
-	void handleEvents();
-	
 	Texture createTexture(const Image& image);
+	Texture createTextureWithTransparentColor(const Image& image, Color transparent);
 
 	RenderTarget *getMainRenderTarget() { return &mainrendertarget; }
 	RenderTarget *newRenderTarget(unsigned int width, unsigned int height);

@@ -17,19 +17,21 @@
  *
  */
 
+#include "caos_assert.h"
 #include "caosVM.h"
-#include "openc2e.h"
 #include "Agent.h"
 #include "AgentRef.h"
 #include "World.h"
 #include "Engine.h" // version
 #include "Camera.h" // FLTX/FLTY
 #include "Map.h"
-#include <iostream>
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include <climits>
 #include <memory>
-using std::cerr;
+
+#ifndef M_PI
+# define M_PI           3.14159265358979323846  /* pi */
+#endif
 
 /**
  ELAS (command) elas (integer)
@@ -166,7 +168,7 @@ void caosVM::v_OBST() {
 			dest.y += targ->range.getFloat(); break;
 	}
 
-	shared_ptr<Room> ourRoom = world.map->roomAt(src.x, src.y);
+	std::shared_ptr<Room> ourRoom = world.map->roomAt(src.x, src.y);
 	if (!ourRoom) {
 		// TODO: is this correct behaviour?
 		result.setFloat(0.0f);
@@ -463,7 +465,7 @@ void caosVM::c_MVSF() {
 	valid_agent(targ);
 
 	if (!targ->tryMoveToPlaceAround(x, y))
-		throw creaturesException(fmt::sprintf("MVSF failed to find a safe place around (%f, %f)", x, y));
+		throw creaturesException(fmt::format("MVSF failed to find a safe place around ({}, {})", x, y));
 }
 
 /**

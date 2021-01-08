@@ -26,14 +26,12 @@
 
 #include "catalogparser.h"
 #include <ghc/filesystem.hpp>
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include <iostream>
-#include <sstream>
 
 #include <cctype>
 
-#include "openc2e.h"
-#include "util.h"
+#include "utils/readfile.h"
 
 
 namespace fs = ghc::filesystem;
@@ -89,12 +87,7 @@ void Catalogue::addVals(std::string &title, bool override, int count,
 extern int cataparse();
 
 void Catalogue::catalogueParseError(const char *err) {
-	std::ostringstream oss;
-	oss << "Catalogue parse error at line " << yylineno;
-	if (err)
-		oss << ": " << err;
-	
-	throw catalogueException(oss.str());
+	throw catalogueException(fmt::format("Catalogue parse error at line {}: {}", yylineno, err));
 }
 
 std::istream &operator >> (std::istream &s, Catalogue &c) {
@@ -158,14 +151,8 @@ void Catalogue::initFrom(fs::path path, std::string language) {
 	}	
 }
 
-std::string stringFromInt(int i) {
-	// TODO: hacky? also, put somewhere more appropriate
-	return fmt::sprintf("%d", i);
-}
-
 const std::string Catalogue::getAgentName(unsigned char family, unsigned char genus, unsigned short species) const {
-	std::string buf;
-	buf = fmt::sprintf("Agent Help %d %d %d", (int)family, (int)genus, species);
+	std::string buf = fmt::format("Agent Help {} {} {}", (int)family, (int)genus, species);
 	if (hasTag(buf)) {
 		return getTag(buf)[0];
 	} else {
@@ -174,7 +161,7 @@ const std::string Catalogue::getAgentName(unsigned char family, unsigned char ge
 }
 
 std::string Catalogue::calculateWildcardTag(std::string tag, unsigned char family, unsigned char genus, unsigned short species) const {
-	std::string searchstring = tag + " " + stringFromInt(family) + " " + stringFromInt(genus) + " " + stringFromInt(species);
+	std::string searchstring = fmt::format("{} {} {} {}", tag, (int)family, (int)genus, species);
 	if (hasTag(searchstring)) return searchstring;
 	if (species != 0) return calculateWildcardTag (tag, family, genus, 0);
 	if (genus != 0) return calculateWildcardTag (tag, family, 0, 0);

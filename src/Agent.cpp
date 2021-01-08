@@ -17,6 +17,8 @@
  *
  */
 
+#include "caos_assert.h"
+#include "SoundManager.h"
 #include "Agent.h"
 #include "MetaRoom.h"
 #include "World.h"
@@ -26,7 +28,7 @@
 #include <memory>
 #include "caosVM.h"
 #include "audiobackend/AudioBackend.h"
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include "Room.h"
 #include "Vehicle.h"
 #include "AgentHelpers.h"
@@ -36,6 +38,10 @@
 #include "Scriptorium.h"
 #include "SpritePart.h"
 #include "VoiceData.h"
+
+#ifndef M_PI
+# define M_PI           3.14159265358979323846  /* pi */
+#endif
 
 void Agent::core_init() {
 	initialized = false;
@@ -117,7 +123,7 @@ void Agent::finishInit() {
 	}
 	
 	// shared_from_this() can only be used if these is at least one extant
-	// shared_ptr which owns this
+	// std::shared_ptr which owns this
 	world.agents.push_front(std::shared_ptr<Agent>(this));
 	agents_iter = world.agents.begin();
 
@@ -219,7 +225,7 @@ void Agent::delFloated(AgentRef a) {
 	floated.erase(i);
 }
 
-shared_ptr<script> Agent::findScript(unsigned short event) {
+std::shared_ptr<script> Agent::findScript(unsigned short event) {
 	return world.scriptorium->getScript(family, genus, species, event);
 }
 
@@ -296,7 +302,7 @@ bool Agent::fireScript(unsigned short event, Agent *from, caosValue one, caosVal
 
 	bool ranscript = false;
 
-	shared_ptr<script> s = findScript(event);
+	std::shared_ptr<script> s = findScript(event);
 	if (s) {
 		bool madevm = false;
 		if (!vm) { madevm = true; vm = world.getVM(this); }
@@ -332,7 +338,7 @@ bool Agent::fireScript(unsigned short event, Agent *from, caosValue one, caosVal
 			// drop script starts (see for instance C1 carrots, which change pose)
 			MetaRoom* m = world.map->metaRoomAt(x, y);
 			if (!m) break;
-			shared_ptr<Room> r = m->nextFloorFromPoint(x, y);
+			std::shared_ptr<Room> r = m->nextFloorFromPoint(x, y);
 			if (!r) break;
 			moveTo(x, r->bot.pointAtX(x).y - getHeight());
 			
@@ -401,51 +407,19 @@ int Agent::handleClick(float clickx, float clicky) {
 void Agent::playAudio(std::string filename, bool controlled, bool loop) {
 	assert(!dying);
 
-	sound.reset();
-	world.playAudio(filename, this, controlled, loop);
+	sound.stop();
+	sound = soundmanager.playSound(filename, loop);
+	updateAudio(sound);
+	if (!controlled) {
+		sound = {};
+	}
 }
 
 bool agentOnCamera(Agent *targ, bool checkall = false); // caosVM_camera.cpp
 
-static bool inrange_at(const MetaRoom *room, float x, float y, unsigned int width, unsigned int height) {
-	const static unsigned int buffer = 500;
-
-	if (engine.camera->getMetaRoom() != room)
-		return false;
-	if (x + buffer < engine.camera->getX() || x + width - buffer > engine.camera->getX() + engine.camera->getWidth())
-		return false;
-	if (y + buffer < engine.camera->getY() || y + height - buffer > engine.camera->getY() + engine.camera->getHeight())
-		return false;
-	return true;
-}
-
-void Agent::updateAudio(std::shared_ptr<AudioSource> s) {
+void Agent::updateAudio(Sound s) {
 	assert(s);
-	MetaRoom *room = world.map->metaRoomAt(x, y);
-	if (!room) {
-		// TODO: think about inrange when positioning outside-metaroom agents
-		s->setPos(x + getWidth() / 2, y + getHeight() / 2, zorder);
-		return;
-	}
-
-	float xc = x;
-
-	bool inrange = false;
-	if (inrange_at(room, x, y, getWidth(), getHeight())) {
-		xc = x;
-		inrange = true;
-	} else if (room->wraparound()) {
-		if (inrange_at(room, x - room->width(), y, getWidth(), getHeight())) {
-			xc = x - room->width();
-			inrange = true;
-		} else if (inrange_at(room, x + room->width(), y, getWidth(), getHeight())) {
-			xc = x + room->width();
-			inrange = true;
-		}
-	}
-	s->setMute(!inrange);
-	if (inrange)
-		s->setPos(xc + getWidth() / 2, y + getHeight() / 2, zorder);
+	s.setPosition(x, y, getWidth(), getHeight());
 	// TODO: setVelocity?
 }
 
@@ -533,7 +507,7 @@ bool Agent::validInRoomSystem(Point p, float w, float h, int testperm) {
 
 			float srcx = src.x, srcy = src.y;
 
-			shared_ptr<Room> ourRoom = m->roomAt(srcx, srcy);
+			std::shared_ptr<Room> ourRoom = m->roomAt(srcx, srcy);
 			if (!ourRoom) return false;
 
 			unsigned int dir; Line wall;
@@ -615,7 +589,7 @@ void Agent::physicsTick() {
 			// store values
 			float srcx = src.x, srcy = src.y;
 
-			shared_ptr<Room> ourRoom = world.map->roomAt(srcx, srcy);
+			std::shared_ptr<Room> ourRoom = world.map->roomAt(srcx, srcy);
 			if (!ourRoom) {
 				if (!displaycore) { // TODO: ugh, displaycore is a horrible thing to use for this
 					// we're out of the room system, physics bug, but let's try MVSFing back in to cover for fuzzie's poor programming skills
@@ -628,7 +602,7 @@ void Agent::physicsTick() {
 					}
 					
 					// didn't work!
-					unhandledException(fmt::sprintf("out of room system at (%f, %f)", srcx, srcy), false);
+					unhandledException(fmt::format("out of room system at ({}, {})", srcx, srcy), false);
 				}
 				displaycore = true;
 				falling = false;
@@ -749,12 +723,12 @@ void Agent::physicsTick() {
 	}
 }
 
-shared_ptr<Room> const Agent::bestRoomAt(unsigned int tryx, unsigned int tryy, unsigned int direction, MetaRoom *m, shared_ptr<Room> exclude) {
-	std::vector<shared_ptr<Room> > rooms = m->roomsAt(tryx, tryy);
+std::shared_ptr<Room> const Agent::bestRoomAt(unsigned int tryx, unsigned int tryy, unsigned int direction, MetaRoom *m, std::shared_ptr<Room> exclude) {
+	std::vector<std::shared_ptr<Room> > rooms = m->roomsAt(tryx, tryy);
 
-	shared_ptr<Room> r;
+	std::shared_ptr<Room> r;
 
-	if (rooms.size() == 0) return shared_ptr<Room>();
+	if (rooms.size() == 0) return std::shared_ptr<Room>();
 	if (rooms.size() == 1) r = rooms[0];
 	else if (rooms.size() > 1) {
 		unsigned int j;
@@ -775,7 +749,7 @@ shared_ptr<Room> const Agent::bestRoomAt(unsigned int tryx, unsigned int tryy, u
 		r = rooms[j];
 	}
 
-	if (r == exclude) return shared_ptr<Room>();
+	if (r == exclude) return std::shared_ptr<Room>();
 	else return r;
 }
 
@@ -790,15 +764,15 @@ void Agent::findCollisionInDirection(unsigned int i, class MetaRoom *m, Point sr
 	}
 
 	// TODO: caching rooms affects behaviour - work out if that's a problem
-	shared_ptr<Room> room = roomcache[i].lock();
+	std::shared_ptr<Room> room = roomcache[i].lock();
 	if (!room || !room->containsPoint(src.x, src.y)) {
-		room = bestRoomAt(src.x, src.y, i, m, shared_ptr<Room>());
+		room = bestRoomAt(src.x, src.y, i, m, std::shared_ptr<Room>());
 		roomcache[i] = room;
 	}
 
 	if (!room) { // out of room system
 		if (!displaycore)
-			unhandledException(fmt::sprintf("out of room system at (%f, %f)", src.x, src.y), false);
+			unhandledException(fmt::format("out of room system at ({}, {})", src.x, src.y), false);
 		falling = false;
 		displaycore = true;
 		return;
@@ -878,7 +852,7 @@ void Agent::findCollisionInDirection(unsigned int i, class MetaRoom *m, Point sr
 				else if (dx < 0 && src.x + p.x <= m->x()) src.x += m->width();
 			}
 
-			shared_ptr<Room> newroom = bestRoomAt(src.x + p.x, src.y + p.y, i, m, room);
+			std::shared_ptr<Room> newroom = bestRoomAt(src.x + p.x, src.y + p.y, i, m, room);
 
 			bool collision = false;
 
@@ -959,7 +933,7 @@ void Agent::physicsTickC2() {
 		MetaRoom *m = world.map->metaRoomAt(x, y);
 		if (!m) {
 			if (!displaycore)
-				unhandledException(fmt::sprintf("out of room system at (%f, %f)", x, y), false);
+				unhandledException(fmt::format("out of room system at ({}, {})", x, y), false);
 			falling = false;
 			displaycore = true;
 			return;
@@ -1007,15 +981,9 @@ void Agent::tick() {
 	LifeAssert la(this);
 	if (dying) return;
 	
+	// reposition audio
 	if (sound) {
-		// if the sound is no longer playing...
-		if (sound->getState() != SS_PLAY) {
-			// ...release our reference to it
-			sound.reset();
-		} else {
-			// otherwise, reposition audio
-			updateAudio(sound);
-		}
+		updateAudio(sound);
 	}
 
 	// don't tick paused agents
@@ -1024,7 +992,7 @@ void Agent::tick() {
 	// CA updates
 	if (emitca_index != -1 && emitca_amount != 0.0f) {
 		assert(0 <= emitca_index && emitca_index <= 19);
-		shared_ptr<Room> r = world.map->roomAt(x, y);
+		std::shared_ptr<Room> r = world.map->roomAt(x, y);
 		if (r) {
 			r->catemp[emitca_index] += emitca_amount;
 			/*if (r->catemp[emitca_index] <= 0.0f) r->catemp[emitca_index] = 0.0f;
@@ -1134,7 +1102,7 @@ Agent::~Agent() {
 
 	if (!initialized) return;
 	if (!dying) {
-		// we can't do kill() here because we can't do anything which might try using our shared_ptr
+		// we can't do kill() here because we can't do anything which might try using our std::shared_ptr
 		// (since this could be during world destruction)
 
 		if (vm) {
@@ -1146,8 +1114,8 @@ Agent::~Agent() {
 		zotstack();
 
 		if (sound) {
-			sound->stop();
-			sound.reset();
+			sound.stop();
+			sound = {};
 		}
 	}
 }
@@ -1172,8 +1140,8 @@ void Agent::kill() {
 	agents_iter->reset();
 
 	if (sound) {
-		sound->stop();
-		sound.reset();
+		sound.stop();
+		sound = {};
 	}
 }
 
@@ -1210,16 +1178,18 @@ int Agent::getUNID() const {
 #include "Catalogue.h"
 
 std::string Agent::identify() const {
-	std::ostringstream o;
-	o << (int)family << " " << (int)genus << " " << species;
+	std::string buf = fmt::format("{} {} {}", (int)family, (int)genus, species);
 	const std::string n = catalogue.getAgentName(family, genus, species);
-	if (n.size())
-		o << " (" + n + ")";
-	/*if (unid != -1)
-		o << " unid " << unid;
-	else
-		o << " (no unid assigned)"; */
-	return o.str();
+	if (n.size()) {
+		buf += " (" + n + ")";
+	}
+	/*if (unid != -1) {
+		buf += " unid ";
+		buf += to_string(unid);
+	} else {
+		buf += " (no unid assigned)";
+	} */
+	return buf;
 }
 
 void Agent::pushVM(caosVM *newvm) {
@@ -1454,12 +1424,12 @@ void Agent::join(unsigned int outid, AgentRef dest, unsigned int inid) {
 void Agent::setVoice(std::string name) {
 	if (engine.version < 3) {
 		std::string path = world.findFile(name + ".vce");
-		if (!path.size()) throw creaturesException(fmt::sprintf("can't find %s.vce", name));
+		if (!path.size()) throw creaturesException(fmt::format("can't find {}.vce", name));
 		std::ifstream f(path.c_str());
-		if (!f.is_open()) throw creaturesException(fmt::sprintf("can't open %s.vce", name));
-		voice = shared_ptr<VoiceData>(new VoiceData(f));
+		if (!f.is_open()) throw creaturesException(fmt::format("can't open {}.vce", name));
+		voice = std::shared_ptr<VoiceData>(new VoiceData(f));
 	} else {
-		voice = shared_ptr<VoiceData>(new VoiceData(name));
+		voice = std::shared_ptr<VoiceData>(new VoiceData(name));
 	}
 }
 
@@ -1486,7 +1456,8 @@ void Agent::tickVoices() {
 	if (ticks_until_next_voice == 0) {
 		auto it = pending_voices.begin();
 		// uncontrolled audio is easier, we shall hope no-one notices
-		playAudio(it->first, false, false);
+		auto voice = soundmanager.playVoice(it->first);
+		updateAudio(voice);
 		ticks_until_next_voice = it->second;
 		pending_voices.erase(it);
 	}

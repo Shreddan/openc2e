@@ -17,17 +17,15 @@
  *
  */
 
-#ifndef SOUNDBACKEND_H
-#define SOUNDBACKEND_H 1
+#pragma once
 
+#include "AudioChannel.h"
+#include "AudioState.h"
 
 #include <memory>
 #include <string>
 
 /* Base class for sources of streaming data (eg, MNG music)
- *
- * The values of isStereo, bitDepth, and preBufferSize MUST remain the same for
- * the life of an instance.
  *
  * produce() shall produce up to len bytes of data (to be stored in the buffer pointed to by 'data'),
  * and return however many it actually produced. If less than len bytes are produced, playback will cease
@@ -36,64 +34,9 @@
  * The implementation should not make any assumptions about how often any of these functions
  * will be called, if at all.
  */
-typedef std::shared_ptr<struct AudioStreamBase> AudioStream;
-struct AudioStreamBase {
-	virtual ~AudioStreamBase() { }
-
-	// Stereo sources will be played without spatial features
-	// left then right format
-	virtual bool isStereo() const = 0;
-	// Must be 8 or 16
-	virtual int bitDepth() const = 0;
-	virtual int sampleRate() const = 0;
-	// The backend will attempt to maintain an internal buffer of approximately
-	// this many milliseconds of audio data.
-	virtual int latency() const = 0;
-
+struct AudioStream {
+	virtual ~AudioStream() { }
 	virtual size_t produce(void *data, size_t len_in_bytes) = 0;
-
-	// Called on a loop; return true on success or false to halt playback anyway
-	virtual bool reset() = 0;
-};
-
-enum SourceState { SS_STOP, SS_PLAY, SS_PAUSE };
-
-class AudioSource : public std::enable_shared_from_this<AudioSource> {
-protected:
-	AudioSource() { }
-
-public:
-	virtual ~AudioSource() { }
-	virtual SourceState getState() const = 0;
-
-	// The effect of calling this function on a AudioSource initialized with loadClip
-	// is undefined
-	virtual AudioStream getStream() const = 0;
-	virtual void setStream(const AudioStream &) = 0;
-	// Convenience function for setting to a new AudioStream.
-	// Ownership passes to AudioSource (or rather, AudioStream's reference counting)
-	virtual void setStream(AudioStreamBase *p) {
-		setStream(AudioStream(p));
-	}
-
-	virtual void play() = 0; /* requires that clip not be a null ref */
-	virtual void stop() = 0;
-	virtual void pause() = 0;
-	virtual void fadeOut() = 0;
-	virtual void setPos(float x, float y, float plane) = 0;
-	virtual void getPos(float &x, float &y, float &plane) const = 0;
-	virtual void setVelocity(float x, float y) = 0;
-	virtual bool isLooping() const = 0;
-	virtual void setLooping(bool) = 0;
-	virtual void setVolume(float vol) = 0;
-	virtual float getVolume() const = 0;
-	float getEffectiveVolume() const { return isMuted() ? 0 : getVolume(); }
-	virtual bool isMuted() const = 0;
-	virtual void setMute(bool) = 0;
-
-	// Set true to lock the location of this source to the viewpoint
-	virtual bool isFollowingView() const = 0;
-	virtual void setFollowingView(bool) = 0;
 };
 
 class AudioBackend : public std::enable_shared_from_this<AudioBackend> {
@@ -101,27 +44,21 @@ protected:
 	AudioBackend() { }
 
 public:
+	virtual ~AudioBackend() { }
 	virtual void init() = 0;
 	virtual void shutdown() = 0;
-	virtual ~AudioBackend() { }
-	virtual void setViewpointCenter(float x, float y) = 0;
-	virtual void setMute(bool) = 0;
-	virtual bool isMuted() const = 0;
-
-	/* TODO: global vol controls */
-	virtual std::shared_ptr<AudioSource> newSource() = 0;
-	/* Returns an AudioSource with a fixed position relative to the viewpoint.
-	 *
-	 * The effect of invoking setPos on this source is undefined.
-	 */
-	virtual std::shared_ptr<AudioSource> getBGMSource() = 0;
-	virtual std::shared_ptr<AudioSource> loadClip(const std::string &filename) = 0;
-
-	virtual void begin() { }
-	virtual void commit() { }
-	virtual void poll() { }
+	
+	virtual AudioChannel playClip(const std::string &filename, bool looping = false) = 0;
+	virtual AudioChannel playWavData(const uint8_t *data, size_t size, bool looping = false) = 0;
+	virtual AudioChannel playStream(AudioStream*) = 0;
+	
+	virtual void fadeOutChannel(AudioChannel) = 0;
+	virtual void setChannelVolume(AudioChannel, float) = 0;
+	virtual void setChannelPan(AudioChannel, float pan) = 0;
+	virtual AudioState getChannelState(AudioChannel) = 0;
+	virtual void stopChannel(AudioChannel) = 0;
+	
+	virtual void playMIDIFile(const std::string &filename) = 0;
+	virtual void setMIDIVolume(float) = 0;
+	virtual void stopMIDI() = 0;
 };
-
-#endif
-
-/* vim: set noet: */

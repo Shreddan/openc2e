@@ -17,36 +17,34 @@
  *
  */
 
-#ifndef _NULLAUDIOBACKEND_H
-#define _NULLAUDIOBACKEND_H
+#pragma once
 
 #include "audiobackend/AudioBackend.h"
-#include "audiobackend/SkeletonAudioBackend.h"
-#include <memory>
-
-class NullAudioSource : public SkeletonAudioSource {};
 
 class NullAudioBackend : public AudioBackend {
-protected:
-	bool muted;
-
 public:
-	NullAudioBackend() { }
-	void init() { muted = false; }
+	NullAudioBackend() = default;
+	void init() { }
 	void shutdown() { }
-	void setViewpointCenter(float, float) { }
-	void setMute(bool b) { muted = b; }
-	bool isMuted() const { return muted; }
-	std::shared_ptr<AudioSource> newSource() { return std::shared_ptr<AudioSource>(); }
-	std::shared_ptr<AudioSource> loadClip(const std::string &filename) {
-		if (filename.size() == 0) return std::shared_ptr<AudioSource>();
-		return std::shared_ptr<AudioSource>(new NullAudioSource());
-	}
 
-	std::shared_ptr<AudioSource> getBGMSource() {
-		return std::shared_ptr<AudioSource>();
+	AudioChannel playClip(const std::string& filename, bool) {
+		if (filename.size() == 0) return {};
+		return { 1 };
 	}
+	virtual AudioChannel playWavData(const uint8_t*, size_t, bool) {
+		return { 1 };
+	}
+	AudioChannel playStream(AudioStream*) {
+		return { 1 };
+	}
+	
+	void fadeOutChannel(AudioChannel) { }
+	void setChannelVolume(AudioChannel, float) { }
+	void setChannelPan(AudioChannel, float) { }
+	AudioState getChannelState(AudioChannel) { return AUDIO_STOPPED; }
+	void stopChannel(AudioChannel) { }
+	
+	void playMIDIFile(const std::string&) { }
+	void setMIDIVolume(float) { }
+	void stopMIDI() { }
 };
- 
-#endif
-

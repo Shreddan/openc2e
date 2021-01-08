@@ -34,7 +34,7 @@ class creaturesImage;
 
 class RenderTarget {
 public:
-	virtual void renderCreaturesImage(const creaturesImage& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false) = 0;
+	virtual void renderCreaturesImage(creaturesImage& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false) = 0;
 	virtual void renderCreaturesImage(const std::shared_ptr<creaturesImage>& tex, unsigned int frame, int x, int y, uint8_t transparency = 0, bool mirror = false) = 0;
 	virtual void renderLine(int x1, int y1, int x2, int y2, unsigned int colour) = 0;
 	virtual void blitRenderTarget(RenderTarget *src, int x, int y, int w, int h) = 0;
@@ -48,12 +48,10 @@ public:
 class Backend {
 public:
 	virtual void init() = 0;
-	virtual int networkInit() = 0;
 	virtual void shutdown() = 0;
 
 	virtual unsigned int ticks() = 0;	
 	virtual bool pollEvent(BackendEvent &e) = 0;
-	virtual void handleEvents() = 0;
 	virtual bool keyDown(int key) = 0;
 
 	virtual void resize(unsigned int width, unsigned int height) = 0;
@@ -64,6 +62,7 @@ public:
 
 	virtual void setDefaultPalette(span<Color> palette) = 0;
 	virtual Texture createTexture(const Image& image) = 0;
+	virtual Texture createTextureWithTransparentColor(const Image& image, Color transparent) = 0;
 	
 	virtual int run() = 0;
 	virtual void delay(int msec) = 0;

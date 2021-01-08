@@ -24,16 +24,6 @@
 #include <stdlib.h> // load the standard libraries for these defines
 #include <stdint.h>
 
-static inline uint16_t swapEndianShort(uint16_t a) {
-	uint8_t *t = reinterpret_cast<uint8_t*>(&a);
-	return (t[0] << 0) | (t[1] << 8);
-}
-
-static inline uint32_t swapEndianLong(uint32_t a) {
-	uint8_t *t = reinterpret_cast<uint8_t*>(&a);
-	return (t[0] << 0) | (t[1] << 8) | (t[2] << 16) | (t[3] << 24);
-}
-
 static inline uint8_t read8(std::istream &s) {
 	uint8_t t[1];
 	s.read(reinterpret_cast<char*>(t), 1);
@@ -44,10 +34,14 @@ static inline uint16_t read16le(const uint8_t* buf) {
 	return (buf[0] << 0) | (buf[1] << 8);
 }
 
+static inline uint16_t read16le(const char* buf) {
+	return read16le(reinterpret_cast<const uint8_t*>(buf));
+}
+
 static inline uint16_t read16le(std::istream &s) {
 	uint8_t t[2];
 	s.read(reinterpret_cast<char*>(t), 2);
-	return (t[0] << 0) | (t[1] << 8);
+	return read16le(t);
 }
 
 static inline uint16_t read16be(std::istream &s) {
@@ -57,8 +51,10 @@ static inline uint16_t read16be(std::istream &s) {
 }
 
 static inline void readmany16le(std::istream &s, uint16_t* out, size_t n) {
+	s.read(reinterpret_cast<char*>(out), n * 2);
 	for (size_t i = 0; i < n; ++i) {
-		out[i] = read16le(s);
+		out[i] = (reinterpret_cast<uint8_t*>(out)[i * 2] << 0) |
+		         (reinterpret_cast<uint8_t*>(out)[i * 2 + 1] << 8);
 	}
 }
 
@@ -82,19 +78,30 @@ static inline void write16be(std::ostream &s, uint16_t v) {
 	s.write(reinterpret_cast<char *>(t), 2);
 }
 
+static inline uint32_t read32le(const uint8_t* buf) {
+	return (buf[0] << 0) | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24);
+}
+
+static inline uint32_t read32le(const char* buf) {
+	return read32le(reinterpret_cast<const uint8_t*>(buf));
+}
+
 static inline uint32_t read32le(std::istream &s) {
 	uint8_t t[4];
 	s.read(reinterpret_cast<char*>(t), 4);
-	return (t[0] << 0) | (t[1] << 8) | (t[2] << 16) | (t[3] << 24);
+	return read32le(t);
+}
+
+static inline void write32le(uint8_t* buf, uint32_t v) {
+	buf[0] = static_cast<uint8_t>(v >> 0);
+	buf[1] = static_cast<uint8_t>(v >> 8);
+	buf[2] = static_cast<uint8_t>(v >> 16);
+	buf[3] = static_cast<uint8_t>(v >> 24);
 }
 
 static inline void write32le(std::ostream &s, uint32_t v) {
-	uint8_t t[] = {
-		static_cast<uint8_t>(v >> 0),
-		static_cast<uint8_t>(v >> 8),
-		static_cast<uint8_t>(v >> 16),
-		static_cast<uint8_t>(v >> 24)
-	};
+	uint8_t t[4];
+	write32le(t, v);
 	s.write(reinterpret_cast<char *>(t), 4);
 }
 

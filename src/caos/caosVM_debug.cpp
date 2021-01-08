@@ -17,8 +17,8 @@
  *
  */
 
+#include "caos_assert.h"
 #include "caosVM.h"
-#include "openc2e.h"
 #include "Agent.h"
 #include "World.h"
 #include <iostream>
@@ -32,10 +32,7 @@
 
 // #include "malloc.h" <- unportable horror!
 #include <sstream>
-#include <fmt/printf.h>
-
-using std::cerr;
-using std::cout;
+#include <fmt/core.h>
 
 /**
  DBG: OUTS (command) val (string)
@@ -52,7 +49,7 @@ using std::cout;
 void caosVM::c_DBG_OUTS() {
 	VM_PARAM_STRING(val)
 	
-	cout << val << std::endl;
+	fmt::print("{}\n", val);
 }
 
 /**
@@ -72,15 +69,14 @@ void caosVM::c_DBG_OUTV() {
 	VM_PARAM_VALUE(val)
 
 	if (val.hasFloat()) {
-		cout << fmt::sprintf("%0.06f", val.getFloat());
+		fmt::print("{:0.06f}", val.getFloat());
 	} else if (val.hasInt()) {
-		cout << val.getInt();
+		fmt::print("{}", val.getInt());
 	} else if (val.hasVector()) {
 		const Vector<float> &v = val.getVector();
-		cout << fmt::sprintf("(%0.6f, %0.6f)", v.x, v.y);
+		fmt::print("({:0.6f}, {:0.6f})", v.x, v.y);
 	} else throw badParamException();
-
-	cout << std::endl;
+	fmt::print("\n");
 }
 
 /**
@@ -250,7 +246,7 @@ void caosVM::c_DBG_DISA() {
 	
 	caos_assert(outputstream);
 
-	shared_ptr<script> s = world.scriptorium->getScript(family, genus, species, event);
+	std::shared_ptr<script> s = world.scriptorium->getScript(family, genus, species, event);
 	if (s) {
 		if (s->fmly != family || s->gnus != genus || s->spcs != species) {
 			*outputstream << "warning: search resulted in script from " << s->fmly << ", " << s->gnus << ", " << s->spcs << " script" << std::endl;

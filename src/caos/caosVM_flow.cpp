@@ -17,10 +17,10 @@
  *
  */
 
+#include "caos_assert.h"
 #include "caosVM.h"
 #include <iostream>
 #include <memory>
-#include "openc2e.h"
 #include "World.h" // enum
 #include <cmath>   // sqrt
 #include <sstream>
@@ -405,7 +405,7 @@ void caosVM::c_CALL() {
 	valid_agent(owner);
 	caos_assert(script_no >= 0 && script_no < 65536);
 
-	shared_ptr<script> s = owner->findScript(script_no);
+	std::shared_ptr<script> s = owner->findScript(script_no);
 	if (!s) return;
 	caosVM *newvm = world.getVM(owner);
 	newvm->trace = trace;
@@ -439,7 +439,6 @@ void caosVM::v_CAOS() {
 	VM_PARAM_INTEGER(state_trans)
 	VM_PARAM_INTEGER(inl)
 	
-	std::istringstream iss(commands);
 	caosScript s("c3", "CAOS command"); // XXX: variant
 
 	caosVM *sub = world.getVM(NULL);
@@ -462,7 +461,7 @@ void caosVM::v_CAOS() {
 	sub->_p_[1] = p2;
 
 	try {
-		s.parse(iss);
+		s.parse(commands);
 		if (inl) {
 			// Inline CAOS calls are expensive, mmmkay?
 			for (int i = 0; i < 100; i++)
@@ -473,6 +472,7 @@ void caosVM::v_CAOS() {
 		
 		std::ostringstream oss;
 		sub->outputstream = &oss;
+    
 		
 		sub->runEntirely(s.installer);
 		

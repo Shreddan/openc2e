@@ -18,8 +18,10 @@
  */
 
 #include "MusicManager.h"
-#include "World.h"
 #include "Engine.h"
+#include "MNGMusic.h"
+#include "SoundManager.h"
+#include "World.h"
 
 // this is all for MusicManager::tick
 #include "World.h"
@@ -27,18 +29,94 @@
 #include "Room.h"
 #include "MetaRoom.h"
 
-MusicManager musicmanager;
+MusicManager::MusicManager(const std::shared_ptr<AudioBackend>& backend_)
+	: backend(backend_), mng_music(std::make_unique<MNGMusic>(backend_)) {}
 
-MusicManager::MusicManager() = default;
 MusicManager::~MusicManager() {
+	stop();
 	for (std::map<std::string, MNGFile *>::iterator i = files.begin(); i != files.end(); i++) {
 		delete i->second;
 	}
 }
 
+void MusicManager::stop() {
+	mng_music->stop();
+	backend->stopMIDI();
+}
+
+float MusicManager::getVolume() {
+	return music_volume;
+}
+
+void MusicManager::setVolume(float volume) {
+	music_volume = volume;
+	updateVolumes();
+}
+
+float MusicManager::getMIDIVolume() {
+	return midi_volume;
+}
+
+void MusicManager::setMIDIVolume(float volume) {
+	midi_volume = volume;
+	updateVolumes();
+}
+
+bool MusicManager::isMuted() {
+	return music_muted;
+}
+
+void MusicManager::setMuted(bool muted) {
+	music_muted = muted;
+	updateVolumes();
+}
+
+bool MusicManager::isMIDIMuted() {
+	auto it = world.variables.find("engine_mute");
+	return it != world.variables.end() && it->second.hasInt() && it->second.getInt() != 0;
+}
+
+void MusicManager::setMIDIMuted(bool muted) {
+	world.variables["engine_mute"] = muted ? 1 : 0;
+	updateVolumes();
+}
+
+void MusicManager::updateVolumes() {
+	mng_music->setVolume(music_muted ? 0 : music_volume);
+	backend->setMIDIVolume(isMIDIMuted() ? 0 : midi_volume);
+	backend->setChannelVolume(creatures1_channel, music_muted ? 0 : music_volume * 0.4);
+}
+
 void MusicManager::playTrack(std::string track, unsigned int _how_long_before_changing_track_ms) {
+	if (track == last_track) {
+		return;
+	}
+	last_track = track;
+
+	auto game_usemidimusicsystem = world.variables["engine_usemidimusicsystem"];
+	bool usemidimusicsystem = game_usemidimusicsystem.hasInt() && game_usemidimusicsystem.getInt() != 0;
+	// TODO: what happens if you call the CAOS command MIDI and usemidimusicsystem isn't enabled?
+
+	if (usemidimusicsystem) {
+		mng_music->playSilence(); // or just stop it?
+
+		if (track == "") {
+			backend->stopMIDI();
+			return;
+		}
+
+		std::string filename = world.findFile("Sounds/" + track + ".mid");
+		if (!filename.size()) {
+			fmt::print("Couldn't find MIDI file '{}'!\n", track);
+			return;
+		}
+		backend->playMIDIFile(filename);
+		how_long_before_changing_track_ms = _how_long_before_changing_track_ms;
+		return;
+	}
+
 	if (track == "Silence") {
-		mng_music.playSilence();
+		mng_music->playSilence();
 	} else {
 		std::string filename, trackname;
 
@@ -56,7 +134,7 @@ void MusicManager::playTrack(std::string track, unsigned int _how_long_before_ch
 		if (files.find(filename) == files.end()) {
 			std::string realfilename = world.findFile("Sounds/" + filename);
 			if (!realfilename.size()) {
-				std::cout << "Couldn't find MNG file '" << filename << "'!" << std::endl;
+				fmt::print("Couldn't find MNG file '{}'!\n", filename);
 				return; // TODO: exception?
 			}
 
@@ -65,14 +143,27 @@ void MusicManager::playTrack(std::string track, unsigned int _how_long_before_ch
 		} else {
 			file = files[filename];
 		}
-
-		mng_music.playTrack(file, trackname);
-		mng_music.startPlayback(*engine.audio);
+		mng_music->playTrack(file, trackname);
 	}
 	how_long_before_changing_track_ms = _how_long_before_changing_track_ms;
 }
 
 void MusicManager::tick() {
+	// play C1 music
+	// TODO: this doesn't seem to actually be every 7 seconds, but actually somewhat random
+	// TODO: this should be linked to 'real' time, so it doesn't go crazy when game speed is modified
+	// TODO: is this the right place for this?
+	if (engine.version == 1 && (world.tickcount % 70) == 0 &&
+	    backend->getChannelState(creatures1_channel) == AUDIO_STOPPED)
+	{
+		auto sounds = world.findFiles("Sounds", "MU*.wav");
+		if (sounds.size()) {
+			creatures1_channel = backend->playClip(sounds[rand() % sounds.size()]);
+		}
+	}
+
+	// play MNG/MIDI music
+	// TODO: how does engine_near_death_track_name work?
 	if (how_long_before_changing_track_ms > 0) {
 		how_long_before_changing_track_ms -= world.ticktime;
 	}
@@ -88,10 +179,10 @@ void MusicManager::tick() {
 			}
 		}
 	}
-}
-
-void MusicManager::render(signed short *data, size_t len) {
-	mng_music.render(data, len);
+	mng_music->update();
+	
+	// update volumes based on new volumes, muting, etc
+	updateVolumes();
 }
 
 /* vim: set noet: */

@@ -20,19 +20,17 @@
 #ifndef _CAOSVM_H
 #define _CAOSVM_H
 
-#include "openc2e.h"
+#include "caos_assert.h"
+#include "bytestring.h"
 #include <array>
-#include <map>
 #include <istream>
 #include <memory>
 #include <ostream>
-#include <sstream>
 #include "AgentRef.h"
 #include "caosValue.h"
 #include "alloc_count.h"
 
 #include <mpark/variant.hpp>
-using std::weak_ptr;
 
 class script;
 
@@ -64,13 +62,14 @@ class vmStackItem {
 			}
 
 			std::string operator()(const bytestring_t &bs) const {
-				std::ostringstream oss;
-				oss << "[ ";
+				std::string buf;
+				buf += "[ ";
 				for (bytestring_t::const_iterator i = bs.begin(); i != bs.end(); i++) {
-					oss << (int)*i << " ";
+					buf += std::to_string((int)*i);
+					buf += " ";
 				}
-				oss << "]";
-				return oss.str();
+				buf += "]";
+				return buf;
 			}
 		};
 
@@ -177,7 +176,7 @@ public:
 	const caosVM_p vm; // == this
 	
 	// script state...
-	shared_ptr<script> currentscript;
+	std::shared_ptr<script> currentscript;
 	int nip, cip, runops;
 	
 	bool inst, lock, stop_loop;
@@ -196,7 +195,7 @@ public:
 	AgentRef targ, owner, _it_;
 	caosValue from;
 	int part;
-	weak_ptr<class Camera> camera;
+	std::weak_ptr<class Camera> camera;
 	class Camera *getCamera();
 	
 	void resetScriptState(); // resets everything except OWNR
@@ -360,9 +359,14 @@ public:
 	// core
 	void v_GAME();
 	void s_GAME();
+	void v_GAME_c2();
+	void s_GAME_c2();
+	void v_GAMN();
+	void c_DELG();
 	void v_EAME();
 	void s_EAME();
-	void c_DELG();
+	void v_EAMN();
+	void c_DELE();
 	void c_OUTX();
 	void c_OUTS();
 	void c_OUTV();
@@ -375,8 +379,6 @@ public:
 	void v_WOLF();
 	void v_LANG();
 	void v_TOKN();
-	void v_GAME_c2();
-	void s_GAME_c2();
 	void c_VRSN();
 	void v_VRSN();
 	void v_OC2E_DDIR();
@@ -447,7 +449,6 @@ public:
 	void c_DELN();
 	void v_REAN();
 	void c_NAMN();
-	void v_GAMN();
 	void c_POWV();
 	void c_RNDV();
 	void v_EGGL();
@@ -888,6 +889,7 @@ public:
 	// sounds
 	void c_SNDE();
 	void c_SNDC();
+	void c_SNDQ();
 	void c_MMSC();
 	void v_MMSC();
 	void c_RMSC();
@@ -1118,11 +1120,11 @@ public:
 	void invoke_cmd(script *s, bool is_saver, int opidx);
 	void runOpCore(script *s, struct caosOp op);
 	void runOp();
-	void runEntirely(shared_ptr<script> s);
+	void runEntirely(std::shared_ptr<script> s);
 
 	void tick();
 	void stop();
-	bool fireScript(shared_ptr<script> s, bool nointerrupt, Agent *frm = 0);
+	bool fireScript(std::shared_ptr<script> s, bool nointerrupt, Agent *frm = 0);
 
 	caosVM(const AgentRef &o);
 	~caosVM();
@@ -1215,8 +1217,11 @@ class caosVM__lval {
 	CAOS_LVALUE_TARG(name, (void)0, exp, exp = newvalue)
 #define STUB throw caosException("stub in " __FILE__)
 
-// FIXME: use do { ... } while (0)
-#define valid_agent(x) do { if (!(x)) throw invalidAgentException(fmt::sprintf("Invalid agent handle: %s thrown from %s:%d", #x, __FILE__, __LINE__)); } while(0)
+#define valid_agent(x) do { \
+		if (!(x)) { \
+			throw invalidAgentException("Invalid agent handle: " #x " thrown from " __FILE__ ":" stringify(__LINE__)); \
+		} \
+	} while(0)
 
 #endif
 /* vim: set noet: */

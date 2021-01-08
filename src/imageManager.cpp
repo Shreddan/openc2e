@@ -20,7 +20,6 @@
 #include "imageManager.h"
 #include "fileformats/ImageUtils.h"
 #include "mmapifstream.h"
-#include "openc2e.h"
 #include "World.h"
 #include "Engine.h"
 #include "Backend.h"
@@ -38,7 +37,7 @@ using namespace ghc::filesystem;
 
 enum filetype { blk, s16, c16, spr, bmp };
 
-shared_ptr<creaturesImage> tryOpen(std::string fname) {
+std::shared_ptr<creaturesImage> tryOpen(std::string fname) {
 	path realfile(world.findFile(fname));
 	std::string basename = realfile.filename().stem();
 
@@ -82,7 +81,7 @@ shared_array<Color> imageManager::getDefaultPalette() {
 /*
  * Add an image to the gallery. Useful mainly for testing situations.
  */
-void imageManager::addImage(shared_ptr<creaturesImage> image) {
+void imageManager::addImage(std::shared_ptr<creaturesImage> image) {
 	if (!image) {
 		throw creaturesException("Can't add null image");
 	}
@@ -101,8 +100,8 @@ void imageManager::addImage(shared_ptr<creaturesImage> image) {
  * Retrieve an image for rendering use. To retrieve a sprite, pass the name without
  * extension. To retrieve a background, pass the full filename (ie, with .blk).
  */
-shared_ptr<creaturesImage> imageManager::getImage(std::string name, bool is_background) {
-	if (name.empty()) return shared_ptr<creaturesImage>(); // empty sprites definitely don't exist
+std::shared_ptr<creaturesImage> imageManager::getImage(std::string name, bool is_background) {
+	if (name.empty()) return std::shared_ptr<creaturesImage>(); // empty sprites definitely don't exist
 
 	// step one: see if the image is already in the gallery
 	std::map<std::string, std::weak_ptr<creaturesImage> >::iterator i = images.find(name);
@@ -118,7 +117,7 @@ shared_ptr<creaturesImage> imageManager::getImage(std::string name, bool is_back
 		fname = std::string("Images/") + name;
 	}
 
-	shared_ptr<creaturesImage> img;
+	std::shared_ptr<creaturesImage> img;
 	if (engine.bmprenderer) {
 		img = tryOpen(fname + ".bmp");
 	} else {
@@ -136,12 +135,7 @@ shared_ptr<creaturesImage> imageManager::getImage(std::string name, bool is_back
 			images[name] = img;
 	} else {
 		std::cerr << "imageGallery couldn't find the sprite '" << name << "'" << std::endl;
-		return shared_ptr<creaturesImage>();
-	}
-	
-	img->textures.resize(img->images.size());
-	for (size_t i = 0; i < img->images.size(); ++i) {
-		img->textures[i] = engine.backend->createTexture(img->images[i]);
+		return std::shared_ptr<creaturesImage>();
 	}
 
 	return img;
@@ -184,7 +178,7 @@ std::shared_ptr<creaturesImage> imageManager::getCharsetDta(imageformat format,
 		case if_bgr24:
 			{
 				shared_array<Color> palette(256);
-				palette[0].a = 0;
+				palette[0] = Color{0, 0, 0, 0xff}; // black is set as the transparent color
 				for (int i = 1; i < 256; i++) {
 					palette[i].r = (textcolor >> 16) & 0xff;
 					palette[i].g = (textcolor >> 8) & 0xff;
@@ -202,10 +196,6 @@ std::shared_ptr<creaturesImage> imageManager::getCharsetDta(imageformat format,
 
 	auto img = std::make_shared<creaturesImage>(path(filename).stem());
 	img->images = images;
-	img->textures.resize(img->images.size());
-	for (size_t i = 0; i < img->images.size(); ++i) {
-		img->textures[i] = engine.backend->createTexture(img->images[i]);
-	}
 	return img;
 }
 
@@ -214,13 +204,9 @@ std::shared_ptr<creaturesImage> imageManager::tint(const std::shared_ptr<creatur
                                                    unsigned char rotation, unsigned char swap) {
 	auto img = std::make_shared<creaturesImage>(oldimage->getName());
 	img->images.resize(oldimage->images.size());
-	img->textures.resize(img->images.size());
-	
 	for (size_t i = 0; i < img->images.size(); ++i) {
 		img->images[i] = ImageUtils::Tint(oldimage->images[i], r, g, b, rotation, swap);
-		img->textures[i] = engine.backend->createTexture(img->images[i]);
 	}
-
 	return img;
 }
 

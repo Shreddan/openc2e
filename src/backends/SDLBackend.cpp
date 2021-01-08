@@ -24,34 +24,18 @@
 #include "creaturesImage.h"
 #include "keycodes.h"
 #include "Engine.h"
-#include "openc2e.h"
+#include "openc2eimgui/Openc2eImGui.h"
 #include "SDLBackend.h"
 #include "World.h"
-
-#if defined(SDL_VIDEO_DRIVER_X11)
-// Workaround for https://bugzilla.libsdl.org/show_bug.cgi?id=5289
-#include "SDL_config.h"
-#undef SDL_VIDEO_DRIVER_DIRECTFB // pulls in directfb.h otherwise
-#include "SDL_syswm.h"
-#include <X11/Xlib.h>
-#endif
-
-SDLBackend *g_backend;
+#include "PointerAgent.h"
+#include "Camera.h"
 
 // reasonable defaults
 constexpr int OPENC2E_DEFAULT_WIDTH = 800;
 constexpr int OPENC2E_DEFAULT_HEIGHT = 600;
 
 SDLBackend::SDLBackend() : mainrendertarget(this) {
-	networkingup = false;
-
 	mainrendertarget.texture = nullptr;
-}
-
-int SDLBackend::idealBpp() {
-	// shadow surfaces seem to generally be faster (presumably due to overdraw), so get SDL to create one for us
-	if (engine.version == 1) return 0;
-	else return 16;
 }
 
 void SDLBackend::resizeNotify(int _w, int _h) {
@@ -63,7 +47,7 @@ void SDLBackend::resizeNotify(int _w, int _h) {
 	float oldscale = mainrendertarget.scale;
 	float newscale = mainrendertarget.drawablewidth / windowwidth * userscale;
 	if (abs(newscale) > 0.01 && abs(oldscale - newscale) > 0.01) {
-		printf("* SDL setting scale to %.2fx\n", newscale);	
+		printf("* SDL setting scale to %.2fx\n", newscale);
 		mainrendertarget.scale = newscale;
 		SDL_RenderSetScale(renderer, mainrendertarget.scale, mainrendertarget.scale);
 	}
@@ -91,10 +75,18 @@ void SDLBackend::init() {
 		OPENC2E_DEFAULT_WIDTH, OPENC2E_DEFAULT_HEIGHT,
 		SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
 	);
-	assert(window);
+	if (!window) {
+		throw creaturesException(std::string("SDL error creating window: ") + SDL_GetError());
+	}
 
-	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
-	assert(renderer);
+	renderer = SDL_CreateRenderer(
+		window,
+		-1,
+		SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE | SDL_RENDERER_PRESENTVSYNC
+	);
+	if (!renderer) {
+		throw creaturesException(std::string("SDL error creating renderer: ") + SDL_GetError());
+	}
 
 	{
 		SDL_RendererInfo info;
@@ -106,116 +98,24 @@ void SDLBackend::init() {
 	SDL_GetWindowSize(window, &windowwidth, &windowheight);
 	resizeNotify(windowwidth, windowheight);
 
+	Openc2eImGui::Init(window);
+
 	SDL_ShowCursor(false);
 	SDL_StartTextInput();
-}
-
-void SDLBackend::initFrom(void *window_id) {
-	int init = SDL_INIT_VIDEO;
-
-	if (SDL_Init(init) < 0)
-		throw creaturesException(std::string("SDL error during initialization: ") + SDL_GetError());
-
-	window = SDL_CreateWindowFrom(window_id);
-	assert(window);
-	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
-	assert(renderer);
-
-	{
-		SDL_RendererInfo info;
-		info.name = nullptr;
-		SDL_GetRendererInfo(renderer, &info);
-		printf("* SDL Renderer: %s\n", info.name);
-	}
-
-#if defined(SDL_VIDEO_DRIVER_X11)
-	// Workaround for https://bugzilla.libsdl.org/show_bug.cgi?id=5289
-	SDL_SysWMinfo info;
-	SDL_VERSION(&info.version);
-	SDL_GetWindowWMInfo(window, &info);
-	if (info.subsystem == SDL_SYSWM_X11) {
-		XSelectInput(info.info.x11.display, info.info.x11.window,
-		             (FocusChangeMask | EnterWindowMask | LeaveWindowMask |
-		              ExposureMask | ButtonReleaseMask | PointerMotionMask |
-		              KeyPressMask | KeyReleaseMask | PropertyChangeMask |
-		              StructureNotifyMask | KeymapStateMask));
-	}
-#endif
-	SDL_ShowCursor(false);
-	SDL_StartTextInput();
-}
-
-int SDLBackend::networkInit() {
-	if (SDLNet_Init() < 0)
-		throw creaturesException(std::string("SDL_net error during initialization: ") + SDLNet_GetError());
-	networkingup = true;
-
-	listensocket = 0;
-	int listenport = 20000;
-	while ((!listensocket) && (listenport < 20050)) {
-		listenport++;
-		IPaddress ip;
-
-		SDLNet_ResolveHost(&ip, 0, listenport);
-		listensocket = SDLNet_TCP_Open(&ip);
-	}
-	
-	if (!listensocket)
-		throw creaturesException(std::string("Failed to open a port to listen on."));
-
-	return listenport;
 }
 
 void SDLBackend::shutdown() {
-	if (networkingup && listensocket)
-		SDLNet_TCP_Close(listensocket);
-	SDLNet_Quit();
 	SDL_Quit();
-}
-
-void SDLBackend::handleEvents() {
-	if (networkingup)
-		handleNetworking();
-}
-
-void SDLBackend::handleNetworking() {
-	// handle incoming network connections
-	while (TCPsocket connection = SDLNet_TCP_Accept(listensocket)) {
-		// check this connection is coming from localhost
-		IPaddress *remote_ip = SDLNet_TCP_GetPeerAddress(connection);
-		unsigned char *rip = (unsigned char *)&remote_ip->host;
-		if ((rip[0] != 127) || (rip[1] != 0) || (rip[2] != 0) || (rip[3] != 1)) {
-			std::cout << "Someone tried connecting via non-localhost address! IP: " << (int)rip[0] << "." << (int)rip[1] << "." << (int)rip[2] << "." << (int)rip[3] << std::endl;
-			SDLNet_TCP_Close(connection);
-			continue;
-		}
-			
-		// read the data from the socket
-		std::string data;
-		bool done = false;
-		while (!done) {
-			char buffer;
-			int i = SDLNet_TCP_Recv(connection, &buffer, 1);
-			if (i == 1) {
-				data = data + buffer;
-				// TODO: maybe we should check for rscr\n like c2e seems to
-				if ((data.size() > 3) && (data.find("rscr\n", data.size() - 5) != data.npos)) done = true;
-			} else done = true;
-		}
-
-		// pass the data onto the engine, and send back our response
-		std::string tosend = engine.executeNetwork(data);
-		SDLNet_TCP_Send(connection, (void *)tosend.c_str(), tosend.size());
-		
-		// and finally, close the connection
-		SDLNet_TCP_Close(connection);
-	}
 }
 
 bool SDLBackend::pollEvent(BackendEvent &e) {
 	SDL_Event event;
 retry:
 	if (!SDL_PollEvent(&event)) return false;
+
+	if (Openc2eImGui::ConsumeEvent(event)) {
+		goto retry;
+	}
 
 	switch (event.type) {
 		case SDL_WINDOWEVENT:
@@ -233,7 +133,7 @@ retry:
 		case SDL_MOUSEMOTION:
 			e.type = eventmousemove;
 			e.x = event.motion.x / userscale;
-			e.y = event.motion.y / userscale;
+			e.y = event.motion.y / userscale - mainrendertarget.viewport_offset_top;
 			e.xrel = event.motion.xrel / userscale;
 			e.yrel = event.motion.yrel / userscale;
 			e.button = 0;
@@ -258,7 +158,7 @@ retry:
 				default: goto retry;
 			}
 			e.x = event.button.x / userscale;
-			e.y = event.button.y / userscale;
+			e.y = event.button.y / userscale - mainrendertarget.viewport_offset_top;
 			break;
 
 		case SDL_MOUSEWHEEL:
@@ -277,16 +177,16 @@ retry:
 			e.text = event.text.text;
 			break;
 
-        case SDL_KEYUP:
-            {
-                int key = translateScancode(event.key.keysym.scancode);
-                if (key != -1) {
-                    e.type = eventrawkeyup;
-                    e.key = key;
-                    return true;
-                }
-                goto retry;
-            }
+		case SDL_KEYUP:
+			{
+				int key = translateScancode(event.key.keysym.scancode);
+				if (key != -1) {
+					e.type = eventrawkeyup;
+					e.key = key;
+					return true;
+				}
+				goto retry;
+			}
 
 		case SDL_KEYDOWN:
 			{
@@ -317,10 +217,14 @@ void SDLRenderTarget::renderLine(int x1, int y1, int x2, int y2, unsigned int co
 	Uint8 a = (color >> 0)  & 0xff;
 	SDL_SetRenderTarget(parent->renderer, texture);
 	SDL_SetRenderDrawColor(parent->renderer, r, g, b, a);
-	SDL_RenderDrawLine(parent->renderer, x1, y1, x2, y2);
+	SDL_RenderDrawLine(parent->renderer, x1, y1 + viewport_offset_top, x2, y2 + viewport_offset_top);
 }
 
 Texture SDLBackend::createTexture(const Image& image) {
+	return createTextureWithTransparentColor(image, Color{});
+}
+
+Texture SDLBackend::createTextureWithTransparentColor(const Image& image, Color transparent_color) {
 	assert(image.data);
 	assert(image.width > 0);
 	assert(image.height > 0);
@@ -374,13 +278,27 @@ Texture SDLBackend::createTexture(const Image& image) {
 	}
 
 	// set colour-keying
-	SDL_SetColorKey(surf, SDL_TRUE, 0);
+	if (transparent_color.a > 0) {
+		if (transparent_color.a != 255) {
+			throw creaturesException("Expected alpha value of transparent color to be 255");
+		}
+		Uint32 sdlcolorkey = SDL_MapRGB(
+			surf->format,
+			transparent_color.r,
+			transparent_color.g,
+			transparent_color.b
+		);
+		SDL_SetColorKey(surf, SDL_TRUE, sdlcolorkey);
+	}
 	
 	// create texture
-	Texture tex;
-	tex.data = SDL_CreateTextureFromSurface(renderer, surf);
-	tex.deleter = [](void *data) { SDL_DestroyTexture(static_cast<SDL_Texture*>(data)); };
-	assert(tex.data);
+	Texture tex(
+		SDL_CreateTextureFromSurface(renderer, surf),
+		image.width,
+		image.height,
+		&SDL_DestroyTexture
+	);
+	assert(tex);
 	return tex;
 }
 
@@ -388,11 +306,19 @@ unsigned int SDLRenderTarget::getWidth() const {
 	return drawablewidth / scale;
 }
 unsigned int SDLRenderTarget::getHeight() const {
-	return drawableheight / scale;
+	return drawableheight / scale - viewport_offset_top - viewport_offset_bottom;
 }
 
-void SDLRenderTarget::renderCreaturesImage(const creaturesImage& img, unsigned int frame, int x, int y, uint8_t transparency, bool mirror) {
-	SDL_Texture *tex = static_cast<SDL_Texture*>(img.getTextureForFrame(frame).data);
+void SDLRenderTarget::renderCreaturesImage(creaturesImage& img, unsigned int frame, int x, int y, uint8_t transparency, bool mirror) {
+	if ((x + img.width(frame) <= 0 || x >= (int)getWidth()) && (y + img.height(frame) <= 0 || y >= (int)getHeight())) {
+		return;
+	}
+
+	if (!img.getTextureForFrame(frame)) {
+		img.getTextureForFrame(frame) = engine.backend->createTextureWithTransparentColor(img.getImageForFrame(frame), Color{0, 0, 0, 0xff});
+	}
+
+	SDL_Texture *tex = img.getTextureForFrame(frame).as<SDL_Texture>();
 	assert(tex);
 
 	SDL_SetTextureAlphaMod(tex, 255 - transparency);
@@ -406,7 +332,7 @@ void SDLRenderTarget::renderCreaturesImage(const creaturesImage& img, unsigned i
 
 	SDL_Rect destrect;
 	destrect.x = x;
-	destrect.y = y;
+	destrect.y = y + viewport_offset_top;
 	destrect.w = srcrect.w;
 	destrect.h = srcrect.h;
 
@@ -426,9 +352,8 @@ void SDLRenderTarget::renderClear() {
 }
 
 void SDLRenderTarget::renderDone() {
-	if (this == &parent->mainrendertarget) {
-		SDL_SetRenderTarget(parent->renderer, texture);
-		SDL_RenderPresent(parent->renderer);
+	if (this != &parent->mainrendertarget) {
+		return;
 	}
 }
 
@@ -436,7 +361,7 @@ void SDLRenderTarget::blitRenderTarget(RenderTarget *s, int x, int y, int w, int
 	SDLRenderTarget *src = dynamic_cast<SDLRenderTarget *>(s);
 	assert(src);
 
-	SDL_Rect r; r.x = x; r.y = y; r.w = w; r.h = h;
+	SDL_Rect r; r.x = x; r.y = y + viewport_offset_top; r.w = w; r.h = h;
 	SDL_SetRenderTarget(parent->renderer, texture);
 	SDL_RenderCopy(parent->renderer, src->texture, nullptr, &r);
 }
@@ -577,9 +502,6 @@ void SDLBackend::delay(int msec) {
 
 int SDLBackend::run() {
 	resize(800, 600);
-	
-	// do a first-pass draw of the world. TODO: correct?
-	world.drawWorld();
 
 	const int OPENC2E_MAX_FPS = 60;
 
@@ -588,7 +510,29 @@ int SDLBackend::run() {
 		Uint32 frame_start = SDL_GetTicks();
 
 		engine.tick();
+
+		// TODO: calculate scale etc here instead of in resizeNotify
+		// TODO: we have to calculate renderer sizes when the backend is initialized,
+		// otherwise side panels get in weird locations. related to issue with panels
+		// when resizing in general?
+
+		Openc2eImGui::Update(window);
+		mainrendertarget.viewport_offset_top = Openc2eImGui::GetViewportOffsetTop();
+		mainrendertarget.viewport_offset_bottom = Openc2eImGui::GetViewportOffsetBottom();
+
 		world.drawWorld();
+
+		SDL_SetRenderTarget(renderer, nullptr);
+		Openc2eImGui::Render();
+
+		{
+			// TODO: hack to display the hand above ImGui windows
+			int adjustx = engine.camera->getX();
+			int adjusty = engine.camera->getY();
+			world.hand()->part(0)->render(getMainRenderTarget(), -adjustx, -adjusty);
+		}
+
+		SDL_RenderPresent(renderer);
 
 		bool focused = SDL_GetWindowFlags(window) & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS);
 		Uint32 desired_ticks_per_frame = focused ? 1000 / OPENC2E_MAX_FPS : world.ticktime;

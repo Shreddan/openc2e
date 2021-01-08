@@ -24,9 +24,10 @@
 #include "creatures/CreatureAgent.h"
 #include "creatures/Creature.h"
 #include "Engine.h" // version
+#include "creaturesException.h"
 
 #include <cassert>
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include <memory>
 
 historyevent::historyevent(unsigned int eno, CreatureAgent *c) {
@@ -46,7 +47,7 @@ historyevent::historyevent(unsigned int eno, CreatureAgent *c) {
 	}
 }
 
-void monikerData::init(std::string m, shared_ptr<genomeFile> f) {
+void monikerData::init(std::string m, std::shared_ptr<genomeFile> f) {
 	moniker = m;
 	status = unreferenced;
 	warpveteran = false;
@@ -144,12 +145,11 @@ monikerstatus monikerData::getStatus() {
 				return deadandkilled;
 
 		default:
-			assert(false); // explode!
+			throw creaturesException("monikerData::getStatus should not be here");
 	}
-
 }
 
-std::string historyManager::newMoniker(shared_ptr<genomeFile> genome) {
+std::string historyManager::newMoniker(std::shared_ptr<genomeFile> genome) {
 	unsigned int genus = 0;
 	
 	for (auto i = genome->genes.begin(); i != genome->genes.end(); i++) {
@@ -165,15 +165,17 @@ std::string historyManager::newMoniker(shared_ptr<genomeFile> genome) {
 
 	if (engine.version > 2) {
 		const std::vector<std::string> *extensions = 0;
-		std::string tagname = fmt::sprintf("Moniker Friendly Names %i", genus);
+		std::string tagname = fmt::format("Moniker Friendly Names {}", (int)genus);
 	
 		if (catalogue.hasTag(tagname)) {
 			extensions = &catalogue.getTag(tagname);
 		} else if (catalogue.hasTag("Moniker Friendly Names")) {
 			extensions = &catalogue.getTag("Moniker Friendly Names");
 		} else {
-			std::cout << "Warning: No \"Moniker Friendly Names\" in catalogue for genus " << genus <<
-				", defaulting to 'xxxx' for a moniker friendly name." << std::endl;
+			fmt::print(
+				"Warning: No \"Moniker Friendly Names\" in catalogue for genus {}, defaulting to 'xxxx' for a moniker friendly name.\n",
+				genus
+			);
 		}
 
 		if (extensions) {
@@ -210,7 +212,7 @@ monikerData &historyManager::getMoniker(std::string s) {
 	return i->second;
 }
 
-std::string historyManager::findMoniker(shared_ptr<genomeFile> g) {
+std::string historyManager::findMoniker(std::shared_ptr<genomeFile> g) {
 	for (std::map<std::string, monikerData>::iterator i = monikers.begin(); i != monikers.end(); i++) {
 		if (i->second.genome.lock() == g) return i->first;
 	}

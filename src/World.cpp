@@ -17,6 +17,7 @@
  *
  */
 
+#include "caos_assert.h"
 #include "World.h"
 #include "Engine.h"
 #include "caosVM.h" // for setupCommandPointers()
@@ -26,7 +27,6 @@
 #include <cassert>
 #include <limits.h> // for MAXINT
 #include <memory>
-#include "audiobackend/AudioBackend.h"
 #include "Backend.h"
 #include "creaturesImage.h"
 #include "fileformats/genomeFile.h"
@@ -39,11 +39,12 @@
 #include "historyManager.h"
 #include "imageManager.h"
 #include "Map.h"
+#include "PathResolver.h"
 #include "prayManager.h"
 #include "Scriptorium.h"
 #include "SpritePart.h"
 
-#include <fmt/printf.h>
+#include <fmt/core.h>
 #include <ghc/filesystem.hpp>
 namespace fs = ghc::filesystem;
 
@@ -80,7 +81,7 @@ void World::init() {
 	if (engine.version > 2 && catalogue.hasTag("Pointer Information")) {
 		const std::vector<std::string> &pointerinfo = catalogue.getTag("Pointer Information");
 		if (pointerinfo.size() >= 3) {
-			shared_ptr<creaturesImage> img = gallery->getImage(pointerinfo[2]);
+			std::shared_ptr<creaturesImage> img = gallery->getImage(pointerinfo[2]);
 			if (img) {
 				theHand = new PointerAgent(pointerinfo[2]);
 				int family, genus, species;
@@ -105,7 +106,7 @@ void World::init() {
 	
 	// If for some reason we failed to do that (missing/bad catalogue tag? missing file?), try falling back to a sane default.
 	if (!theHand) {
-		shared_ptr<creaturesImage> img;
+		std::shared_ptr<creaturesImage> img;
 		if (engine.gametype == "c3")
 			img = gallery->getImage("hand"); // as used in C3 and DS
 		else
@@ -154,7 +155,6 @@ void World::init() {
 
 void World::shutdown() {
 	agents.clear();
-	uncontrolled_sounds.clear();
 	map->Reset();
 }
 
@@ -218,31 +218,6 @@ void World::tick() {
 		// due to destruction ordering we must explicitly destroy all agents here
 		agents.clear();
 		engine.done = true;
-	}
-
-	// Notify the audio backend about our current viewpoint center.
-	engine.audio->setViewpointCenter(engine.camera->getXCentre(), engine.camera->getYCentre());
-
-	std::list<std::pair<std::shared_ptr<AudioSource>, bool> >::iterator si = uncontrolled_sounds.begin();
-	while (si != uncontrolled_sounds.end()) {
-		std::list<std::pair<std::shared_ptr<AudioSource>, bool> >::iterator next = si; next++;
-		if (si->first->getState() != SS_PLAY) {
-			// sound is stopped, so release our reference
-			uncontrolled_sounds.erase(si);
-		} else {
-			if (si->second) {
-				// follow viewport
-				si->first->setPos(engine.camera->getXCentre(), engine.camera->getYCentre(), 0);
-			} else {
-				// mute/unmute off-screen uncontrolled audio if necessary
-				float x, y, z;
-				si->first->getPos(x, y, z);
-				if (engine.version > 2) // TODO: this is because of wrap issues, but we need a better fix
-					si->first->setMute(engine.camera->getMetaRoom() != world.map->metaRoomAt(x, y));
-			}
-		}
-
-		si = next;
 	}
 
 	// Tick all agents, deleting as necessary.
@@ -384,8 +359,8 @@ void World::freeUNID(int unid) {
 	unidmap.erase(unid);
 }
 
-shared_ptr<Agent> World::lookupUNID(int unid) {
-	if (unid == 0) return shared_ptr<Agent>();
+std::shared_ptr<Agent> World::lookupUNID(int unid) {
+	if (unid == 0) return std::shared_ptr<Agent>();
 	return unidmap[unid].lock();
 }
 
@@ -408,7 +383,7 @@ void World::drawWorld(Camera *cam, RenderTarget *surface) {
 	}
 	int adjustx = cam->getX();
 	int adjusty = cam->getY();
-	shared_ptr<creaturesImage> bkgd = m->getBackground(""); // TODO
+	std::shared_ptr<creaturesImage> bkgd = m->getBackground(""); // TODO
 
 	// TODO: work out what c2e does when it doesn't have a background..
 	if (!bkgd) return;
@@ -477,7 +452,7 @@ void World::drawWorld(Camera *cam, RenderTarget *surface) {
 	}
 
 	if (showrooms) {
-		shared_ptr<Room> room_under_hand = map->roomAt(hand()->x, hand()->y);
+		std::shared_ptr<Room> room_under_hand = map->roomAt(hand()->x, hand()->y);
 		auto draw_room = [&](const auto& r, unsigned int color) {
 			// rooms don't wrap over the boundary, so just draw twice
 			r->renderBorders(surface, adjustx, adjusty, color);
@@ -523,11 +498,10 @@ void World::drawWorld(Camera *cam, RenderTarget *surface) {
 	surface->renderDone();
 }
 
-void World::executeInitScript(fs::path p) {
-	assert(fs::exists(p));
-	assert(!fs::is_directory(p));
+void World::executeInitScript(std::string x) {
+	assert(fs::exists(x));
+	assert(!fs::is_directory(x));
 
-	std::string x = p.string();
 	std::ifstream s(x.c_str());
 	assert(s.is_open());
 	//std::cout << "executing script " << x << "...\n";
@@ -539,12 +513,12 @@ void World::executeInitScript(fs::path p) {
 		script.installScripts();
 		vm.runEntirely(script.installer);
 	} catch (creaturesException &e) {
-		std::cerr << "exec of \"" << p.filename() << "\" failed due to exception " << e.prettyPrint() << std::endl;
+		std::cerr << "exec of \"" << fs::path(x).filename() << "\" failed due to exception " << e.prettyPrint() << std::endl;
 	}
 	std::cout.flush(); std::cerr.flush();
 }
 
-void World::executeBootstrap(fs::path p) {
+void World::executeBootstrap(std::string p) {
 	if (!fs::is_directory(p)) {
 		executeInitScript(p);
 		return;
@@ -559,8 +533,9 @@ void World::executeBootstrap(fs::path p) {
 	}
 
 	std::sort(scripts.begin(), scripts.end());
-	for (std::vector<fs::path>::iterator i = scripts.begin(); i != scripts.end(); i++)
-		executeInitScript(*i);
+	for (auto s : scripts) {
+		executeInitScript(s);
+	}
 }
 
 void World::executeBootstrap(bool switcher) {
@@ -571,7 +546,7 @@ void World::executeBootstrap(bool switcher) {
 			throw creaturesException("C1/2 can't run without data directories!");
 
 		// TODO: case-sensitivity for the lose
-		fs::path edenpath(data_directories[0] / "Eden.sfc");
+		auto edenpath = fs::path(data_directories[0]) / "Eden.sfc";
 		if (fs::exists(edenpath) && !fs::is_directory(edenpath)) {
 			SFCFile sfc;
 			std::ifstream f(edenpath.string().c_str(), std::ios::binary);
@@ -589,23 +564,22 @@ void World::executeBootstrap(bool switcher) {
 	if (switcher) {
 		for (auto p : data_directories) {
 			// TODO: cvillage has switcher code in 'Startup', so i included it here too
-			if (fs::exists(p / "Bootstrap" / "000 Switcher")) {
-				printf("%s\n", p.string().c_str());
-				executeBootstrap(p / "Bootstrap" / "000 Switcher");
+			if (fs::exists(fs::path(p) / "Bootstrap" / "000 Switcher")) {
+				executeBootstrap(fs::path(p) / "Bootstrap" / "000 Switcher");
 				return;
 			}
-			if (fs::exists(p / "Bootstrap" / "Startup")) {
-				executeBootstrap(p / "Bootstrap" / "Startup");
+			if (fs::exists(fs::path(p) / "Bootstrap" / "Startup")) {
+				executeBootstrap(fs::path(p) / "Bootstrap" / "Startup");
 				return;
 			}
 		}
 		throw creaturesException("couldn't find '000 Switcher' or 'Startup' bootstrap directory");
 	}
 
-	for (std::vector<fs::path>::iterator i = data_directories.begin(); i != data_directories.end(); i++) {
-		assert(fs::exists(*i));
-		assert(fs::is_directory(*i));
-		fs::path b(*i / "Bootstrap/");
+	for (auto dd : data_directories) {
+		assert(fs::exists(dd));
+		assert(fs::is_directory(dd));
+		auto b = fs::path(dd) / "Bootstrap/";
 		if (fs::exists(b) && fs::is_directory(b)) {
 			fs::directory_iterator fsend;
 			// iterate through each bootstrap directory
@@ -628,26 +602,24 @@ void World::executeBootstrap(bool switcher) {
 }
 
 void World::initCatalogue() {
-	for (std::vector<fs::path>::iterator i = data_directories.begin(); i != data_directories.end(); i++) {
-		assert(fs::exists(*i));
-		assert(fs::is_directory(*i));
+	for (auto d : data_directories) {
+		assert(fs::exists(d));
+		assert(fs::is_directory(d));
 
-		fs::path c(*i / "Catalogue/");
+		auto c = fs::path(d) / "Catalogue/";
 		if (fs::exists(c) && fs::is_directory(c))
 			catalogue.initFrom(c, engine.language);
 	}
 }
 
-#include "PathResolver.h"
 std::string World::findFile(std::string name) {
 	// Go backwards, so we find files in more 'modern' directories first..
 	for (int i = data_directories.size() - 1; i != -1; i--) {
-		fs::path p = data_directories[i];
-		std::string r = (p / fs::path(name)).string();
-		if (resolveFile(r))
-			return r;
+		std::string resolved = resolveFile(fs::path(data_directories[i]) / name);
+		if (!resolved.empty()) {
+			return resolved;
+		}
 	}
-	
 	return "";
 }
 
@@ -669,7 +641,7 @@ std::string World::getUserDataDir() {
 	if (data_directories.size() ==  0) {
 		throw creaturesException("Can't get user data directory when there are no data directories");
 	}
-	return data_directories.back().string();
+	return data_directories.back();
 }
 
 void World::selectCreature(std::shared_ptr<Agent> a) {
@@ -688,12 +660,12 @@ void World::selectCreature(std::shared_ptr<Agent> a) {
 	}
 }
 
-shared_ptr<genomeFile> World::loadGenome(std::string &genefile) {
+std::shared_ptr<genomeFile> World::loadGenome(std::string &genefile) {
 	std::vector<std::string> possibles = findFiles("Genetics/", genefile + ".gen");
-	if (possibles.empty()) return shared_ptr<genomeFile>();
+	if (possibles.empty()) return std::shared_ptr<genomeFile>();
 	genefile = possibles[(int)((float)possibles.size() * (rand() / (RAND_MAX + 1.0)))];
 
-	shared_ptr<genomeFile> p(new genomeFile());
+	std::shared_ptr<genomeFile> p(new genomeFile());
 	std::ifstream gfile(genefile.c_str(), std::ios::binary);
 	caos_assert(gfile.is_open());
 	gfile >> std::noskipws;
@@ -702,7 +674,7 @@ shared_ptr<genomeFile> World::loadGenome(std::string &genefile) {
 	return p;
 }
 
-void World::newMoniker(shared_ptr<genomeFile> g, std::string genefile, AgentRef agent) {
+void World::newMoniker(std::shared_ptr<genomeFile> g, std::string genefile, AgentRef agent) {
 	std::string d = history->newMoniker(g);
 	world.history->getMoniker(d).addEvent(2, "", genefile);
 	world.history->getMoniker(d).moveToAgent(agent);
@@ -712,10 +684,10 @@ std::string World::generateMoniker(std::string basename) {
 	if (engine.version < 3) {
 		/* old-style monikers are four characters in a format like 9GVC */
 		unsigned int n = 1 + (unsigned int)(9.0 * (rand() / (RAND_MAX + 1.0)));
-		std::string moniker = fmt::sprintf("%d", n);
+		std::string moniker = std::to_string(n);
 		for (unsigned int i = 0; i < 3; i++) {
 			unsigned int n = (unsigned int)(26.0 * (rand() / (RAND_MAX + 1.0)));
-			moniker += fmt::sprintf("%c", (char)('A' + n));
+			moniker += fmt::format("{:c}", (char)('A' + n));
 		}
 		return moniker;
 	}
@@ -729,51 +701,10 @@ std::string World::generateMoniker(std::string basename) {
 	std::string x = basename;
 	for (unsigned int i = 0; i < 4; i++) {
 		unsigned int n = (unsigned int) (0xfffff * (rand() / (RAND_MAX + 1.0)));
-		x = x + "-" + fmt::sprintf("%05x", n);
+		x = x + "-" + fmt::format("{:05x}", n);
 	}
 	
 	return x;
-}
-
-std::shared_ptr<AudioSource> World::playAudio(std::string name, AgentRef agent, bool controlled, bool loop, bool followviewport) {
-	if (name.size() == 0) return std::shared_ptr<AudioSource>();
-
-	std::string filename = findFile(fmt::format("Sounds/{}.wav", name));
-	if (filename.size() == 0) {
-		if (engine.version < 3) return std::shared_ptr<AudioSource>(); // creatures 1 and 2 ignore non-existent audio clips
-		throw creaturesException(fmt::format("No such clip '{}.wav'", name));
-	}
-
-	std::shared_ptr<AudioSource> sound = engine.audio->loadClip(filename);
-	if (!sound) {
-		// note that more specific error messages can be thrown by implementations of loadClip
-		throw creaturesException("failed to load audio clip " + filename);
-	}
-
-	if (loop) {
-		assert(controlled);
-		sound->setLooping(true);
-	}
-
-	if (agent) {
-		assert(!followviewport);
-
-		agent->updateAudio(sound);
-		if (controlled)
-			agent->sound = sound;
-		else
-			uncontrolled_sounds.push_back(std::pair<std::shared_ptr<class AudioSource>, bool>(sound, false));
-	} else {
-		assert(!controlled);
-
-		// TODO: handle non-agent sounds
-		sound->setPos(engine.camera->getXCentre(), engine.camera->getYCentre(), 0);
-		uncontrolled_sounds.push_back(std::pair<std::shared_ptr<class AudioSource>, bool>(sound, followviewport));
-	}
-	
-	sound->play();
-
-	return sound;
 }
 
 int World::findCategory(unsigned char family, unsigned char genus, unsigned short species) {
@@ -791,11 +722,11 @@ int World::findCategory(unsigned char family, unsigned char genus, unsigned shor
 	const std::vector<std::string> &t = catalogue.getTag("Agent Classifiers");
 
 	for (unsigned int i = 0; i < t.size(); i++) {
-		std::string buffer = fmt::sprintf("%d %d %d", (int)family, (int)genus, (int)species);
+		std::string buffer = fmt::format("{} {} {}", (int)family, (int)genus, (int)species);
 		if (t[i] == buffer) return i;
-		buffer = fmt::sprintf("%d %d 0", (int)family, (int)genus);
+		buffer = fmt::format("{} {} 0", (int)family, (int)genus);
 		if (t[i] == buffer) return i;
-		buffer = fmt::sprintf("%d 0 0", (int)family);
+		buffer = fmt::format("{} 0 0", (int)family);
 		if (t[i] == buffer) return i;
 		// leave it here: 0 0 0 would be silly to have in Agent Classifiers.
 	}

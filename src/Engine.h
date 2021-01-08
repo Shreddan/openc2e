@@ -51,7 +51,7 @@ protected:
 	std::string preferred_backend, preferred_audiobackend;
 
 	void handleKeyboardScrolling();
-	void handleResizedWindow(BackendEvent &event);
+	void handleResizedWindow();
 	void handleMouseMove(BackendEvent &event);
 	void handleMouseButton(BackendEvent &event);
 	void handleTextInput(BackendEvent &event);
@@ -62,10 +62,12 @@ protected:
 	void loadGameData();
 
 public:
-	std::map<caosValue, caosValue, caosValueCompare> eame_variables; // non-serialised
+	std::map<std::string, caosValue> eame_variables; // non-serialised
 	
 	std::shared_ptr<Backend> backend;
 	std::shared_ptr<class AudioBackend> audio;
+	std::shared_ptr<class NetBackend> net;
+	std::unique_ptr<class MusicManager> musicmanager;
 	std::string getBackendName() { return preferred_backend; }
 	std::string getAudioBackendName() { return preferred_audiobackend; }
 

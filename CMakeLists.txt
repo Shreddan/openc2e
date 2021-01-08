@@ -4,8 +4,6 @@ project(openc2e)
 set(SRC "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BIN "${CMAKE_CURRENT_BINARY_DIR}")
 set(GEN "${BIN}/generated")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "") # so openc2e can find the DLLs
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "") # so dist can find the shared libraries
 
 set(CMAKE_MODULE_PATH "${SRC}/cmake")
 
@@ -14,7 +12,6 @@ if (NOT CMAKE_BUILD_TYPE)
 		"The type of build to perform. Valid values are: RelWithDebInfo (default), Debug, Release, MinSizeRel" FORCE)
 endif()
 
-option(OPENC2E_USE_QT "Build the qt GUI" ON)
 option(OPENC2E_USE_SERIALIZATION "Build the experimental serialization code" OFF)
 option(OPENC2E_PROFILE_ALLOCATION "Collect allocation profile stats for DBG: SIZO" OFF)
 if (OPENC2E_PROFILE_ALLOCATION)
@@ -31,43 +28,30 @@ if(NOT RE2C_EXECUTABLE)
 endif()
 
 if(WIN32)
-	add_subdirectory(externals/winflexbison EXCLUDE_FROM_ALL)
-	set(BISON_EXECUTABLE "win_bison")
-
 	add_subdirectory(externals/zlib EXCLUDE_FROM_ALL)
 else()
-	find_package(BISON REQUIRED)
-
 	find_package(ZLIB REQUIRED)
 endif()
 
 if(WIN32 OR APPLE)
 	add_subdirectory(externals/libpng EXCLUDE_FROM_ALL)
+	add_subdirectory(externals/utf8proc EXCLUDE_FROM_ALL)
+	add_library(utf8proc::utf8proc ALIAS utf8proc)
 
 	add_subdirectory(externals/SDL2 EXCLUDE_FROM_ALL)
 	add_subdirectory(externals/SDL2_mixer EXCLUDE_FROM_ALL)
-	add_subdirectory(externals/SDL2_net EXCLUDE_FROM_ALL)
 	add_library(SDL2::SDL2 ALIAS SDL2)
 	add_library(SDL2::Mixer ALIAS SDL2_mixer)
-	add_library(SDL2::Net ALIAS SDL2_net)
 else()
 	find_package(PNG REQUIRED)
+	find_package(utf8proc REQUIRED)
 
 	find_package(SDL2 REQUIRED)
 	find_package(SDL2_mixer REQUIRED)
-	find_package(SDL2_net REQUIRED)
-	find_package(X11 REQUIRED) # Workaround for https://bugzilla.libsdl.org/show_bug.cgi?id=5289
 endif()
 
 if (OPENC2E_USE_SERIALIZATION)
 	find_package(Boost 1.34.0 COMPONENTS serialization REQUIRED)
-endif()
-if (OPENC2E_USE_QT)
-	if(WIN32)
-		file(GLOB qt_directories "C:/Qt/Qt5.*/5.*/msvc*")
-		list(APPEND CMAKE_PREFIX_PATH ${qt_directories})
-	endif()
-	find_package(Qt5 COMPONENTS Widgets REQUIRED)
 endif()
 
 add_subdirectory(externals/cxxopts EXCLUDE_FROM_ALL)
@@ -75,8 +59,10 @@ add_subdirectory(externals/fmt EXCLUDE_FROM_ALL)
 add_subdirectory(externals/ghc_filesystem EXCLUDE_FROM_ALL)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE) # fix 'mismatch detected for RuntimeLibrary'
 add_subdirectory(externals/googletest EXCLUDE_FROM_ALL)
+add_subdirectory(externals/imgui EXCLUDE_FROM_ALL)
+add_subdirectory(externals/imgui_sdl EXCLUDE_FROM_ALL)
 add_subdirectory(externals/mpark-variant EXCLUDE_FROM_ALL)
-add_subdirectory(externals/utf8proc EXCLUDE_FROM_ALL)
+
 
 # Pass flags to the compiler
 add_compile_definitions("_REENTRANT" "YYERROR_VERBOSE")
@@ -100,10 +86,10 @@ include_directories(BEFORE
 add_library(openc2e-common STATIC
 	src/encoding.cpp
 	src/mmapifstream.cpp
-	src/stringutil.cpp
-	src/util.cpp
+	src/utils/readfile.cpp
+	src/utils/string_in.cpp
 )
-target_link_libraries(openc2e-common PRIVATE utf8proc)
+target_link_libraries(openc2e-common PRIVATE utf8proc::utf8proc)
 
 add_library(openc2e-fileformats STATIC
 	src/fileformats/attFile.cpp
@@ -119,8 +105,7 @@ add_library(openc2e-fileformats STATIC
 	src/fileformats/c2cobfile.cpp
 	src/fileformats/genomeFile.cpp
 	src/fileformats/mngfile.cpp
-	${GEN}/fileformats/mnglexer.cpp
-	${GEN}/fileformats/mngparser.tab.cpp
+	${GEN}/fileformats/mngparser.cpp
 	src/fileformats/peFile.cpp
 	src/fileformats/pngImage.cpp
 	src/fileformats/PrayFileReader.cpp
@@ -128,6 +113,8 @@ add_library(openc2e-fileformats STATIC
 	${GEN}/fileformats/PraySourceParser.cpp
 	src/fileformats/s16Image.cpp
 	src/fileformats/sprImage.cpp
+	src/fileformats/strFile.cpp
+	src/fileformats/verticalbarFile.cpp
 	src/fileformats/ImageUtils.cpp
 )
 target_link_libraries(openc2e-fileformats
@@ -185,6 +172,8 @@ add_library(openc2e-core STATIC
 	src/AnimatablePart.cpp
 	src/ButtonPart.cpp
 	src/CameraPart.cpp
+	src/ChemicalNamesManager.cpp
+	src/CobManager.cpp
 	src/CompoundPart.cpp
 	src/DullPart.cpp
 	src/FixedTextPart.cpp
@@ -205,6 +194,7 @@ add_library(openc2e-core STATIC
 	src/MetaRoom.cpp
 	src/MNGMusic.cpp
 	src/MusicManager.cpp
+	src/NetBackend.cpp
 	src/creatures/oldBrain.cpp
 	src/parseException.cpp
 	src/partzorder.cpp
@@ -220,6 +210,9 @@ add_library(openc2e-core STATIC
 	src/SFCFile.cpp
 	src/SimpleAgent.cpp
 	src/creatures/SkeletalCreature.cpp
+	src/socket.cpp
+	src/Sound.cpp
+	src/SoundManager.cpp
 	src/Vehicle.cpp
 	src/VoiceData.cpp
 	src/World.cpp
@@ -252,62 +245,24 @@ target_link_libraries(openc2e-audiobackend PUBLIC SDL2::Mixer)
 add_executable(openc2e
 	src/main.cpp
 	src/backends/SDLBackend.cpp
+	src/backends/openc2eimgui/AgentInjector.cpp
+	src/backends/openc2eimgui/BrainViewer.cpp
+	src/backends/openc2eimgui/C1ToolBar.cpp
+	src/backends/openc2eimgui/C2StatusBar.cpp
+	src/backends/openc2eimgui/C2ToolBar.cpp
+	src/backends/openc2eimgui/CreatureGrapher.cpp
+	src/backends/openc2eimgui/Hatchery.cpp
+	src/backends/openc2eimgui/ImGuiUtils.cpp
+	src/backends/openc2eimgui/MainMenu.cpp
+	src/backends/openc2eimgui/Openc2eImGui.cpp
 )
 target_link_libraries(openc2e
 	openc2e-core
 	openc2e-audiobackend
+	imgui
+	imgui_sdl
 	SDL2::SDL2
-	SDL2::Net
 )
-if(X11_FOUND) # Workaround for https://bugzilla.libsdl.org/show_bug.cgi?id=5289
-	target_link_libraries(openc2e ${X11_LIBRARIES})
-	target_include_directories(openc2e PRIVATE ${X11_INCLUDE_DIR})
-endif()
-if (OPENC2E_USE_QT)
-	target_sources(openc2e PRIVATE
-		src/backends/qtgui/qtopenc2e.cpp
-		src/backends/qtgui/openc2eview.cpp
-		src/backends/qtgui/AgentInjector.cpp
-		src/backends/qtgui/BrainViewer.cpp
-		src/backends/qtgui/imagepreview.cpp
-		src/backends/qtgui/QtBackend.cpp
-		src/backends/qtgui/GraphWidget.cpp
-		src/backends/qtgui/CreatureGrapher.cpp
-		src/backends/qtgui/ChemicalSelector.cpp
-		src/backends/qtgui/Hatchery.cpp
-		src/tools/braininavat/brainview.cpp
-		src/backends/qtgui/agents.ui
-	)
-	target_link_libraries(openc2e Qt5::Widgets)
-	target_compile_definitions(openc2e PUBLIC "QT_SUPPORT")
-	set_target_properties(openc2e PROPERTIES
-		AUTOMOC ON
-		AUTORCC ON
-		AUTOUIC ON
-	)
-
-	if (WIN32)
-		find_program(WINDEPLOYQT_EXECUTABLE windeployqt)
-		get_target_property(qt_core_location Qt5::Core LOCATION)
-		get_filename_component(qt_runtime_dir "${qt_core_location}" DIRECTORY)
-		add_custom_command(
-			TARGET openc2e POST_BUILD
-			COMMAND ${CMAKE_COMMAND}
-			-D "DIST_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-			-D "EXTRA_LIB_DIRS=${qt_runtime_dir}"
-			-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Openc2eBundle.cmake
-		)
-		if(OPENC2E_USE_QT)
-				add_custom_command(
-				  TARGET openc2e POST_BUILD
-					COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/platforms/"
-					COMMAND ${CMAKE_COMMAND} -E copy_if_different
-					"$<TARGET_FILE:Qt5::QWindowsIntegrationPlugin>"
-					"${CMAKE_CURRENT_BINARY_DIR}/platforms/"
-				)
-		endif()
-	endif()
-endif()
 
 add_executable(change_breed_slot src/tools/change_breed_slot.cpp)
 target_link_libraries(change_breed_slot openc2e-fileformats)
@@ -321,6 +276,9 @@ target_link_libraries(creaturesarchivedumper fmt ghc_filesystem z)
 add_executable(mngdumper src/tools/mngdumper.cpp)
 target_link_libraries(mngdumper fmt ghc_filesystem openc2e-fileformats)
 
+add_executable(mngbuild src/tools/mngbuild.cpp)
+target_link_libraries(mngbuild fmt ghc_filesystem openc2e-fileformats)
+
 add_executable(mngplayer
 	src/MNGMusic.cpp
 	src/tools/mngplayer.cpp
@@ -333,14 +291,6 @@ target_link_libraries(praydumper openc2e-fileformats)
 add_executable(praybuilder src/tools/praybuilder.cpp)
 target_link_libraries(praybuilder openc2e-fileformats)
 
-add_executable(praytoolqt src/tools/praytoolqt.cpp)
-target_link_libraries(praytoolqt openc2e-fileformats Qt5::Widgets)
-set_target_properties(praytoolqt PROPERTIES
-	AUTOMOC ON
-	AUTORCC ON
-	AUTOUIC ON
-)
-
 add_executable(spritedumper src/tools/spritedumper.cpp)
 target_link_libraries(spritedumper openc2e-fileformats fmt ghc_filesystem)
 
@@ -350,9 +300,8 @@ add_executable(translate_voice
 	src/Catalogue.cpp
 	${GEN}/cataloglexer.cpp
 	src/catalogparser.cpp
-	src/util.cpp
 )
-target_link_libraries(translate_voice openc2e-audiobackend fmt ghc_filesystem)
+target_link_libraries(translate_voice openc2e-common openc2e-audiobackend fmt ghc_filesystem)
 
 # tests
 enable_testing()
@@ -395,8 +344,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SRC}/docs/openc2e.6 ${BIN}/openc2e.6
 	DEPENDS docs/openc2e.6
 	)
-# it seems these add_custom_command for flex and bison could be made
-# into a macro... e.g. FLEX(file1) FLEX(file2) etc...
+# it seems these add_custom_command for re2c could be made
+# into a macro... e.g. RE2C(file1) RE2C(file2) etc...
 add_custom_command(
 	OUTPUT ${GEN}/cataloglexer.cpp
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${GEN}"
@@ -419,10 +368,10 @@ add_custom_command(
 	WORKING_DIRECTORY ${SRC})
 
 add_custom_command(
-	OUTPUT ${GEN}/fileformats/mnglexer.cpp
+	OUTPUT ${GEN}/fileformats/mngparser.cpp
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${GEN}/fileformats"
-	COMMAND ${RE2C_EXECUTABLE} -o ${GEN}/fileformats/mnglexer.cpp ${SRC}/src/fileformats/mnglexer.re2c
-	DEPENDS ${SRC}/src/fileformats/mnglexer.re2c
+	COMMAND ${RE2C_EXECUTABLE} -o ${GEN}/fileformats/mngparser.cpp ${SRC}/src/fileformats/mngparser.re2c
+	DEPENDS ${SRC}/src/fileformats/mngparser.re2c
 	WORKING_DIRECTORY ${SRC})
 
 add_custom_command(
@@ -439,21 +388,61 @@ add_custom_command(
 	DEPENDS ${SRC}/src/fileformats/PraySourceParser.re2c
 	WORKING_DIRECTORY ${SRC})
 
-add_custom_command(
-	OUTPUT ${GEN}/fileformats/mngparser.tab.cpp ${GEN}/fileformats/mngparser.tab.hpp
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${GEN}/fileformats"
-	COMMAND ${BISON_EXECUTABLE} -d --name-prefix=mng --file-prefix="${GEN}/fileformats/mngparser" src/fileformats/mngparser.ypp
-	DEPENDS src/fileformats/mngparser.ypp
-	WORKING_DIRECTORY ${SRC})
-
 add_custom_target(docs ALL DEPENDS ${BIN}/caosdocs.html ${BIN}/docs.css ${BIN}/openc2e.6)
 add_custom_target(generated DEPENDS
 	${GEN}/caoslexer.cpp
-	${GEN}/mngparser.tab.cpp ${GEN}/mngparser.tab.hpp
-	${GEN}/mnglexer.cpp
+	${GEN}/mngparser.cpp
 	${GEN}/cataloglexer.cpp
 	${GEN}/cmddata.cpp
 )
+
+install(FILES
+	AUTHORS
+	COPYING
+	README.md
+	docs/openc2e.6
+	${BIN}/caosdocs.html	
+	${BIN}/docs.css
+	${GEN}/commandinfo.json
+	DESTINATION "."
+)
+install(TARGETS
+	openc2e
+	cobdumper
+	mngdumper
+	praybuilder
+	praydumper
+	spritedumper
+	DESTINATION "."
+)
+if(TARGET SDL2)
+	install(TARGETS SDL2 DESTINATION ".")
+endif()
+install(SCRIPT "cmake/Openc2eBundle.cmake")
+if(APPLE)
+	install(CODE "message(STATUS \"Writing: fix_unidentified_developer.sh\")
+	              file(WRITE \"\${CMAKE_INSTALL_PREFIX}/fix_unidentified_developer.sh\" \"sudo xattr -r -d com.apple.quarantine .\")")
+endif()
+if(WIN32)
+	include(Openc2eDetectTargetArchitecture)
+	if(TARGETARCH_X64)
+		install(CODE "message(STATUS \"Downloading: vc_redist.x64.exe\")
+		              file(DOWNLOAD \"https://aka.ms/vs/16/release/vc_redist.x64.exe\" \"\${CMAKE_INSTALL_PREFIX}/vc_redist.x64.exe\")")
+	endif()
+	if(TARGETARCH_ARM64)
+		install(CODE "message(STATUS \"Downloading: vc_redist.arm64.exe\")
+		              file(DOWNLOAD \"https://aka.ms/vs/16/release/vc_redist.arm64.exe\" \"\${CMAKE_INSTALL_PREFIX}/vc_redist.arm64.exe\")")
+	endif()
+endif()
+
+if(WIN32)
+	set(CPACK_GENERATOR ZIP)
+else()
+	set(CPACK_GENERATOR TXZ)
+endif()
+include(Openc2eReadGitRev)
+set(CPACK_PACKAGE_VERSION "${git_short_rev}")
+include(CPack)
 
 # Creating folder for distribution
 include(Openc2eReadGitRev)
@@ -461,7 +450,6 @@ set(dist_name "openc2e-${git_short_rev}-${CMAKE_SYSTEM_NAME}")
 set(dist_dir "${CMAKE_CURRENT_BINARY_DIR}/${dist_name}")
 set(dist_args)
 list(APPEND dist_args
-	COMMAND ${CMAKE_COMMAND} -E echo "::set-env name=DIST_NAME::${dist_name}"
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${dist_dir}/"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"${CMAKE_CURRENT_SOURCE_DIR}/AUTHORS"
@@ -474,6 +462,7 @@ list(APPEND dist_args
 		"$<TARGET_FILE:openc2e>"
 		"$<TARGET_FILE:cobdumper>"
 		"$<TARGET_FILE:mngdumper>"
+		"$<TARGET_FILE:mngbuild>"
 		"$<TARGET_FILE:praybuilder>"
 		"$<TARGET_FILE:praydumper>"
 		"$<TARGET_FILE:spritedumper>"
@@ -481,6 +470,7 @@ list(APPEND dist_args
 	DEPENDS "${BIN}/caosdocs.html" "${BIN}/docs.css"
 	COMMAND ${CMAKE_COMMAND}
 		-D "DIST_DIR=${dist_dir}"
+		-D "EXTRA_LIB_DIRS=$<TARGET_FILE_DIR:openc2e>" # MSVC puts built binaries and DLLs under $BUILD_TYPE
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Openc2eBundle.cmake
 )
 if(APPLE)
@@ -489,22 +479,21 @@ if(APPLE)
 		COMMAND chmod +x "${dist_dir}/fix_unidentified_developer.sh"
 	)
 endif()
-if(OPENC2E_USE_QT)
-	if(WIN32)
-		list(APPEND dist_args
-			COMMAND ${CMAKE_COMMAND} -E make_directory "${dist_dir}/platforms/"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			"$<TARGET_FILE:Qt5::QWindowsIntegrationPlugin>"
-			"${dist_dir}/platforms/"
-		)
-	elseif(APPLE)
-		list(APPEND dist_args
-			COMMAND ${CMAKE_COMMAND} -E make_directory "${dist_dir}/platforms/"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			"$<TARGET_FILE:Qt5::QCocoaIntegrationPlugin>"
-			"${dist_dir}/platforms/"
-		)
+if(WIN32 OR TRUE)
+	include(Openc2eDetectTargetArchitecture)
+	if(TARGETARCH_X64)
+		file(WRITE "${BIN}/Openc2eDownloadVCRedistX64.cmake" "file(DOWNLOAD \"https://aka.ms/vs/16/release/vc_redist.x64.exe\" \"${dist_dir}/vc_redist.x64.exe\")")
+		list(APPEND dist_args COMMAND cmake -P "${BIN}/Openc2eDownloadVCRedistX64.cmake")
 	endif()
+	if(TARGETARCH_ARM64)
+		file(WRITE "${BIN}/Openc2eDownloadVCRedistArm64.cmake" "file(DOWNLOAD \"https://aka.ms/vs/16/release/vc_redist.arm64.exe\" \"${dist_dir}/vc_redist.arm64.exe\")")
+		list(APPEND dist_args COMMAND cmake -P "${BIN}/Openc2eDownloadVCRedistARM64.cmake")
+	endif()
+endif()
+if(DEFINED ENV{GITHUB_ENV})
+	list(APPEND dist_args
+		COMMAND echo "DIST_NAME=${dist_name}" >> "$ENV{GITHUB_ENV}"
+	)
 endif()
 add_custom_target(dist ${dist_args})
 

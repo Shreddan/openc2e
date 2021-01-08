@@ -24,20 +24,18 @@
 #include "caosVM.h"
 #include "fileformats/caoslexer.h"
 #include "fileformats/caostoken.h"
-#include "openc2e.h"
 #include "Engine.h"
 #include "parseException.h"
 #include "World.h"
 #include "dialect.h"
-#include "util.h"
+#include "utils/readfile.h"
 #include "Scriptorium.h"
 #include <cassert>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <algorithm>
 #include <cstring>
-#include <fmt/printf.h>
+#include <fmt/core.h>
 
 using std::string;
 
@@ -93,18 +91,15 @@ script::script(const Dialect *v, const std::string &fn,
 }
 
 std::string script::dump() {
-	std::ostringstream oss;
-	oss << "Relocations:" << std::endl;
+	std::string buf = "Relocations:\n";
 	for (unsigned int i = 1; i < relocations.size(); i++) {
-		oss << fmt::sprintf("%08d -> %08d", i, relocations[i]) << std::endl;
+		buf += fmt::format("{:08d} -> {:08d}\n", i, relocations[i]);
 	}
-	oss << "Code:" << std::endl;
+	buf += "Code:\n";
 	for (unsigned int i = 0; i < ops.size(); i++) {
-		oss << fmt::sprintf("%08d: ", i);
-		oss << dumpOp(dialect, ops[i]);
-		oss << std::endl;
+		buf += fmt::format("{:08d}: {}\n", i, dumpOp(dialect, ops[i]));
 	}
-	return oss.str();
+	return buf;
 }
 
 caosScript::caosScript(const std::string &dialect, const std::string &fn) {
@@ -112,18 +107,18 @@ caosScript::caosScript(const std::string &dialect, const std::string &fn) {
 	d = getDialectByName(dialect);
 	if (!d)
 		throw parseException(std::string("Unknown dialect ") + dialect);
-	current = installer = shared_ptr<script> (new script(d, fn));
+	current = installer = std::shared_ptr<script> (new script(d, fn));
 	filename = fn;
 }
 
 caosScript::~caosScript() {
-	// Nothing to do, yay shared_ptr!
+	// Nothing to do, yay std::shared_ptr!
 }
 
 void caosScript::installScripts() {
-	std::vector<shared_ptr<script> >::iterator i = scripts.begin();
+	std::vector<std::shared_ptr<script> >::iterator i = scripts.begin();
 	while (i != scripts.end()) {
-		shared_ptr<script> s = *i;
+		std::shared_ptr<script> s = *i;
 		world.scriptorium->addScript(s->fmly, s->gnus, s->spcs, s->scrp, s);
 		i++;
 	}
@@ -313,15 +308,18 @@ void caosScript::putBackToken(caostoken *t) {
 }
 
 void caosScript::parse(std::istream &in) {
-	assert(!tokens);
 	// slurp our input stream
-	std::string caostext = readfile(in);
+	return parse(readfile(in));
+}
+
+void caosScript::parse(const std::string &caostext) {
+	assert(!tokens);
 	// run the token parser
 	{
 		std::vector<caostoken> rawtokens;
 		lexcaos(rawtokens, caostext.c_str());
 
-		tokens = shared_ptr<std::vector<caostoken> >(new std::vector<caostoken>());
+		tokens = std::shared_ptr<std::vector<caostoken> >(new std::vector<caostoken>());
 		size_t index = 0;
 		for (auto& t : rawtokens) {
 			switch (t.type) {
@@ -354,8 +352,8 @@ void caosScript::parse(std::istream &in) {
 	try {
 		parseloop(ST_INSTALLER, NULL);
 
-		std::ostringstream oss;
-		shared_ptr<std::vector<toktrace> > tokinfo(new std::vector<toktrace>());
+		std::string buf;
+		std::shared_ptr<std::vector<toktrace> > tokinfo(new std::vector<toktrace>());
 		for (size_t p = 0; p < tokens->size(); p++) {
 			std::string tok = (*tokens)[p].format();
 			int len = tok.size();
@@ -363,10 +361,11 @@ void caosScript::parse(std::istream &in) {
 				errindex = p;
 				throw parseException("Overlong token");
 			}
-			oss << tok << " ";
+			buf += tok;
+			buf += " ";
 			tokinfo->push_back(toktrace(len, (*tokens)[p].lineno));
 		}
-		shared_str code(oss.str());
+		shared_str code(buf);
 		installer->code = code;
 		installer->tokinfo = tokinfo;
 		installer->link();
@@ -375,7 +374,7 @@ void caosScript::parse(std::istream &in) {
 			removal->tokinfo = tokinfo;
 			removal->code = code;
 		}
-		std::vector<shared_ptr<script> >::iterator i = scripts.begin();
+		std::vector<std::shared_ptr<script> >::iterator i = scripts.begin();
 		while (i != scripts.end()) {
 			(*i)->tokinfo = tokinfo;
 			(*i)->code = code;
@@ -683,7 +682,7 @@ void caosScript::parseloop(int state, void *info) {
 			int gnus = bits[1];
 			int spcs = bits[2];
 			int scrp = bits[3];
-			scripts.push_back(shared_ptr<script>(new script(d, filename, fmly, gnus, spcs, scrp)));
+			scripts.push_back(std::shared_ptr<script>(new script(d, filename, fmly, gnus, spcs, scrp)));
 			current = scripts.back();
 		} else if (t->word() == "rscr") {
 			if (state == ST_INSTALLER || state == ST_BODY || state == ST_REMOVAL)
@@ -691,7 +690,7 @@ void caosScript::parseloop(int state, void *info) {
 			else
 				throw parseException("Unexpected RSCR");
 			if (!removal)
-				removal = shared_ptr<script>(new script(d, filename));
+				removal = std::shared_ptr<script>(new script(d, filename));
 			current = removal;
 		} else if (t->word() == "iscr") {
 			if (state == ST_INSTALLER || state == ST_BODY || state == ST_REMOVAL)

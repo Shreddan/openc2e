@@ -17,24 +17,27 @@
  *
  */
 
+#include "caos_assert.h"
 #include "caosVM.h"
 #include "Agent.h"
 #include <memory>
 #include <stdlib.h> // rand()
-#include <iostream>
 #include <math.h> // abs()/fabs()
-#include "openc2e.h"
 #include "World.h"
 #include "Engine.h"
 #include "Catalogue.h"
 
 #include <cctype> // toupper/tolower
 #include <algorithm> // transform
-#include <fmt/printf.h>
+#include <fmt/core.h>
 
 #include "Vehicle.h"
 #include "PointerAgent.h"
 #include "creatures/CreatureAgent.h"
+
+#ifndef M_PI
+# define M_PI           3.14159265358979323846  /* pi */
+#endif
 
 /**
  VAxx (variable)
@@ -617,10 +620,10 @@ void caosVM::v_VTOS() {
 	VM_PARAM_DECIMAL(value)
 
 	if (value.hasInt()) {
-		result.setString(fmt::sprintf("%i", value.getInt()));
+		result.setString(std::to_string(value.getInt()));
 	} else {
 		// TODO: this format isn't right (see OUTS also)
-		result.setString(fmt::sprintf("%f", value.getFloat()));
+		result.setString(fmt::format("{:0.06f}", value.getFloat()));
 	}
 }
 
@@ -961,30 +964,6 @@ void caosVM::c_DELN() {
 	std::map<caosValue, caosValue, caosValueCompare>::iterator i = targ->name_variables.find(name);
 	if (i == targ->name_variables.end()) return;
 	targ->name_variables.erase(i);
-}
-
-/**
- GAMN (string) previous (string)
- %status maybe
-*/
-void caosVM::v_GAMN() {
-	VM_PARAM_STRING(previous)
-
-	// TODO: we assume that GAME variables don't have an empty string
-	if (previous.empty()) {
-		if (world.variables.size() == 0)
-			result.setString("");
-		else
-			result.setString(world.variables.begin()->first);
-	} else {
-		std::map<std::string, caosValue>::iterator i = world.variables.find(previous);
-		caos_assert(i != world.variables.end()); // TODO: this probably isn't correct behaviour
-		i++;
-		if (i == world.variables.end())
-			result.setString("");
-		else
-			result.setString(i->first);
-	}
 }
 
 /**

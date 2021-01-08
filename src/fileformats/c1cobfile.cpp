@@ -3,6 +3,7 @@
 #include "endianlove.h"
 
 #include <cassert>
+#include <fstream>
 
 static std::string read_string(std::istream &in) {
     uint16_t length = read8(in);
@@ -13,6 +14,11 @@ static std::string read_string(std::istream &in) {
     script.back() = '\0';
     in.read((char*)script.data(), length);
     return { (char*)script.data() };
+}
+
+c1cobfile read_c1cobfile(const std::string &path) {
+  std::ifstream in(path, std::ios::binary);
+  return read_c1cobfile(in);
 }
 
 c1cobfile read_c1cobfile(std::istream &in) {
@@ -46,9 +52,11 @@ c1cobfile read_c1cobfile(std::istream &in) {
      // ABK- Egg Gender.cob has it zeroed
     assert(unknown_always_picture_width == 0 || unknown_always_picture_width == cob.picture.width);
     
-    cob.picture.data = shared_array<uint8_t>(cob.picture.width * cob.picture.height);
-    for (size_t i = 0; i < cob.picture.height; ++i) {
-      in.read((char*)cob.picture.data.data() + cob.picture.width * (cob.picture.height - 1 - i), cob.picture.width);
+    if (cob.picture.width > 0 && cob.picture.height > 0) {
+      cob.picture.data = shared_array<uint8_t>(cob.picture.width * cob.picture.height);
+      for (size_t i = 0; i < cob.picture.height; ++i) {
+        in.read((char*)cob.picture.data.data() + cob.picture.width * (cob.picture.height - 1 - i), cob.picture.width);
+      }
     }
     
     cob.name = read_string(in);

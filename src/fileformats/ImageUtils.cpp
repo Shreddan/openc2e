@@ -7,17 +7,12 @@
 #include "fileformats/charsetdta.h"
 #include "fileformats/s16Image.h"
 #include "fileformats/sprImage.h"
+#include "utils/ascii_tolower.h"
+#include "mmapifstream.h"
 
 namespace fs = ghc::filesystem;
 
 namespace ImageUtils {
-  
-static void ascii_to_lower(std::string &s) {
-    for (auto& c : s) {
-      if (c <= 'Z' && c >= 'A')
-          c = c - ('Z' - 'z');
-    }
-}
 
 MultiImage ReadImage(std::string path) {
   if (!fs::exists(path)) {
@@ -25,9 +20,9 @@ MultiImage ReadImage(std::string path) {
   }
   
   std::string ext = fs::path(path).extension();
-  ascii_to_lower(ext);
+  ext = ascii_tolower(ext);
   
-  std::ifstream in(path, std::ios::binary);
+  mmapifstream in(path);
   if (ext == ".spr") {
     return ReadSprFile(in);
   }
@@ -45,7 +40,7 @@ MultiImage ReadImage(std::string path) {
   }
   
   std::string filename = fs::path(path).filename();
-  ascii_to_lower(filename);
+  filename = ascii_tolower(filename);
   
   if (filename == "charset.dta" || filename == "eurocharset.dta") {
     return ReadCharsetDtaFile(in);
@@ -277,6 +272,42 @@ Image Tint(const Image& oldimage, unsigned char r, unsigned char g, unsigned cha
 
   return newimage;
 
+}
+
+Color GetPixelColor(const Image& image, unsigned int x, unsigned int y) {
+  if (image.format == if_index8) {
+    uint8_t palette_index = image.data[y * image.width + x];
+    return image.palette[palette_index];
+
+  } else if (image.format == if_rgb555) {
+    uint16_t pixel = ((uint16_t*)image.data.data())[y * image.width + x];
+    uint8_t r = (pixel & 0x7C00) >> 10;
+    uint8_t g = (pixel & 0x03E0) >> 5;
+    uint8_t b = (pixel & 0x001F);
+    r = r * 255 / 31;
+    g = g * 255 / 31;
+    b = b * 255 / 31;
+    return Color{r, g, b, 255};
+
+  } else if (image.format == if_rgb565) {
+    uint16_t pixel = ((uint16_t*)image.data.data())[y * image.width + x];
+    uint8_t r = (pixel & 0xF800) >> 11;
+    uint8_t g = (pixel & 0x07E0) >> 5;
+    uint8_t b = (pixel & 0x001F);
+    r = r * 255 / 31;
+    g = g * 255 / 63;
+    b = b * 255 / 31;
+    return Color{r, g, b, 255};
+
+  } else if (image.format == if_bgr24) {
+    uint8_t b = image.data[(y * image.width + x) * 3];
+    uint8_t g = image.data[(y * image.width + x) * 3 + 1];
+    uint8_t r = image.data[(y * image.width + x) * 3 + 2];
+    return Color{r, g, b, 255};
+
+  } else {
+    throw creaturesException("GetPixelColor unimplemented for format " + std::to_string(image.format));
+  }
 }
 
 } // namespace ImageUtils

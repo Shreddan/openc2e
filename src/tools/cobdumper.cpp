@@ -5,13 +5,12 @@
 #include "fileformats/c2cobfile.h"
 #include "fileformats/caoslexer.h"
 #include "fileformats/pngImage.h"
-#include "stringutil.h"
+#include "utils/string_in.h"
 
 #include <fmt/format.h>
 #include <fstream>
 #include <ghc/filesystem.hpp>
 #include <iostream>
-#include <sstream>
 
 namespace fs = ghc::filesystem;
 
@@ -169,7 +168,9 @@ int main(int argc, char **argv) {
 		c1cobfile cob = read_c1cobfile(in);
 		std::string sprite_filename = stem.string() + ".png";
 		fmt::print("*# COB-Name \"{}\"\n", cob.name);
-		fmt::print("*# Picture \"{}\"\n", sprite_filename);
+		if (cob.picture) {
+			fmt::print("*# Picture \"{}\"\n", sprite_filename);
+		}
 		fmt::print("*# Quantity available = {}\n", cob.quantity_available);
 		if (cob.quantity_used != 0) {
 			fmt::print("*# Quantity used = {}\n", cob.quantity_used);
@@ -197,8 +198,9 @@ int main(int argc, char **argv) {
 			fmt::print(script);
 		}
 
-    std::ofstream out(sprite_filename, std::ios_base::binary);
-    WritePngFile(cob.picture, out);
+		if (cob.picture) {
+			WritePngFile(cob.picture, sprite_filename);
+		}
 
 	} else {
 		fmt::print(stderr, "Not a recognized COB format: bad magic 0x{:02x}{:02x}{:02x}{:02x}\n", magic[0], magic[1], magic[2], magic[3]);
