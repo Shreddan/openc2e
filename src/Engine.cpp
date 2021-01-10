@@ -18,6 +18,7 @@
  */
 
 #include "Bubble.h"
+#include "caosVM.h"
 #include "Room.h"
 #include "Engine.h"
 #include "World.h"
@@ -26,7 +27,6 @@
 #include "MusicManager.h"
 #include "SoundManager.h"
 #include "NetBackend.h"
-#include "caosVM.h" // for setupCommandPointers()
 #include "caosScript.h" // for executeNetwork()
 #include "PointerAgent.h"
 #include "audiobackend/NullAudioBackend.h"

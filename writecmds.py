@@ -17,6 +17,7 @@ TDISP = {
     "bareword": "CI_BAREWORD",
     "subcommand": "CI_SUBCOMMAND",
     "command": "CI_COMMAND",
+    "facevalue": "CI_FACEVALUE",
 }
 
 
@@ -48,36 +49,41 @@ def writelookup(cmds):
         cmd["lookup_key"] = prefix + cmd["name"].lower()
 
 
+already_printed_argps = set()
+
 def printarr(cmds, variant, arrname):
-    buf = ""
+    buf = "\n"
     buf += "static const struct cmdinfo {}[] = {{\n".format(arrname)
     idx = 0
     for cmd in cmds:
         argp = "NULL"
         if cmd.get("arguments"):
-            args = ""
+            args = []
             for arg in cmd["arguments"]:
                 if not arg["type"] in TDISP:
                     raise Exception("Unknown argument type {}".format(arg["type"]))
                 type = TDISP[arg["type"]]
-                args += "{}, ".format(type)
-            argp = "{}_t_{}_{}".format(arrname, cmd["type"], cmd["key"])
-            print(
-                "static const enum ci_type {}[] = {{ {} }};".format(
-                    argp, args
+                args.append(type)
+            argp = "args_{}".format("_".join(t.lower().split("ci_", 1)[1] for t in args))
+            if argp not in already_printed_argps:
+                print(
+                    "static const enum ci_type {}[] = {{ {} }};".format(
+                        argp, ", ".join(args)
+                    )
                 )
-            )
+                already_printed_argps.add(argp)
 
         buf += "\t{{ // {} {}\n".format(idx, cmd["key"])
         idx += 1
 
-        if not cmd.get("implementation"):
-            cmd["implementation"] = "caosVM::dummy_cmd"
-        if not cmd.get("saveimpl"):
-            cmd["saveimpl"] = "caosVM::dummy_cmd"
-
-        buf += "\t\t&{}, // handler\n".format(cmd["implementation"])
-        buf += "\t\t&{}, // savehandler\n".format(cmd["saveimpl"])
+        if cmd.get("implementation"):
+            buf += "\t\t&{}, // handler\n".format(cmd["implementation"])
+        else:
+            buf += "\t\tnullptr, // handler\n"
+        if cmd.get("saveimpl"):
+            buf += "\t\t&{}, // savehandler\n".format(cmd["saveimpl"])
+        else:
+            buf += "\t\tnullptr, // savehandler\n"
 
         buf += '\t\t"{}", // lookup_key\n'.format(cmd["lookup_key"])
         buf += '\t\t"{}", // key\n'.format(cmd["key"])
@@ -210,11 +216,26 @@ print(
 #include <cstdio>
 #include <climits>
 #include "cmddata.h"
-#include "caosVM.h"
 #include "dialect.h"
 
+class caosVM;
 """
 )
+
+declarations = set()
+
+for variant_name in data["variants"]:
+    variant = data["variants"][variant_name]
+    cmds = list(variant.values())
+    
+    for c in cmds:
+        declarations.add(c["implementation"])
+        if "saveimpl" in c:
+            declarations.add(c["saveimpl"])
+
+for d in sorted(declarations):
+    print("void {}(caosVM*);".format(d))
+print("")
 
 for variant_name in sorted(data["variants"]):
     variant = data["variants"][variant_name]

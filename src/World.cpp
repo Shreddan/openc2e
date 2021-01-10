@@ -17,10 +17,10 @@
  *
  */
 
-#include "caos_assert.h"
 #include "World.h"
+#include "caos_assert.h"
+#include "caosVM.h"
 #include "Engine.h"
-#include "caosVM.h" // for setupCommandPointers()
 #include "caosScript.h"
 #include "PointerAgent.h"
 #include "CompoundAgent.h" // for setFocus
@@ -47,6 +47,12 @@
 #include <fmt/core.h>
 #include <ghc/filesystem.hpp>
 namespace fs = ghc::filesystem;
+
+struct scriptevent {
+	unsigned short scriptno;
+	AgentRef agent, from;
+	caosValue p[2];
+};
 
 World world;
 
@@ -277,8 +283,8 @@ void World::tick() {
 	world.map->tick();
 
 	// TODO: correct behaviour? hrm :/
-	world.hand()->velx.setFloat(world.hand()->velx.getFloat() / 2.0f);
-	world.hand()->vely.setFloat(world.hand()->vely.getFloat() / 2.0f);
+	world.hand()->velx = world.hand()->velx / 2.0f;
+	world.hand()->vely = world.hand()->vely / 2.0f;
 }
 
 Agent *World::agentAt(unsigned int x, unsigned int y, bool obey_all_transparency, bool needs_mouseable) {
